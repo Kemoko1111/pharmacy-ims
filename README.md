@@ -51,6 +51,14 @@ the point of sale.
 
 All diagrams are **Mermaid** — GitHub renders them natively; no image exports needed.
 
+### Word versions (for submission)
+
+Every document above is also generated as **.docx** in [`word/`](word/), with all
+diagrams rendered as embedded images. `00 COMBINED — PharmaTrack Weeks 1-3.docx` is the
+single-file version with a title page and table of contents. The markdown files remain
+the source of truth — edit those, then regenerate the Word files (conversion script:
+Mermaid → PNG via mermaid-cli, then pandoc → docx).
+
 ---
 
 ## The problem in one paragraph

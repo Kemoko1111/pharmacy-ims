@@ -8,49 +8,77 @@ user stories (US-xx) in the Requirements Document.
 
 ## 1. Use case diagram
 
+Split into two views for readability (a single diagram with 15 use cases is unreadable
+on a page). Role inheritance: Manager can do everything a Pharmacist/Inventory Officer
+can; Admin can do everything (permission matrix in ADR-005).
+
+**(a) POS & sales operations**
+
 ```mermaid
 graph LR
-    subgraph Actors
-        CA(["Cashier"])
-        PH(["Pharmacist"])
-        IO(["Inventory Officer"])
-        MG(["Manager"])
-        AD(["Administrator"])
-        SUP(["Supplier<br/>(external)"])
-        SMS(["SMS Gateway<br/>(external)"])
-    end
+    CA(["Cashier"])
+    PH(["Pharmacist"])
+    MG(["Manager"])
 
-    subgraph "PharmaTrack — Pharmacy Inventory & POS System"
+    subgraph PharmaTrack
         UC1((Log in / out))
         UC2((Process sale))
         UC3((Print receipt))
         UC4((Sync offline sales))
-        UC5((Process return/refund))
-        UC6((Manage products & prices))
-        UC7((Receive stock<br/>batches + expiry))
-        UC8((Raise purchase order))
-        UC9((Adjust stock))
-        UC10((Approve adjustment/refund))
-        UC11((View dashboards & reports))
-        UC12((Manage users & roles))
-        UC13((Configure settings))
-        UC14((Review audit log))
-        UC15((Receive expiry/low-stock alerts))
+        UC5((Process<br/>return/refund))
+        UC10((Approve refund))
+        UC11((View dashboards<br/>& reports))
     end
 
-    CA --> UC1 & UC2 & UC3 & UC5
+    CA --> UC1
+    CA --> UC2
+    CA --> UC5
     UC2 -.include.-> UC3
     UC2 -.extend.-> UC4
-    PH --> UC1 & UC2 & UC7 & UC9 & UC10 & UC15
-    IO --> UC1 & UC6 & UC7 & UC8 & UC9
-    MG --> UC1 & UC10 & UC11 & UC15
-    AD --> UC12 & UC13 & UC14
+    PH --> UC2
+    PH --> UC10
+    MG --> UC10
+    MG --> UC11
+```
+
+**(b) Inventory, purchasing & administration**
+
+```mermaid
+graph LR
+    IO(["Inventory Officer"])
+    PH2(["Pharmacist"])
+    MG2(["Manager"])
+    AD(["Administrator"])
+
+    subgraph PharmaTrack
+        UC6((Manage products<br/>& prices))
+        UC7((Receive stock<br/>batches + expiry))
+        UC8((Raise purchase<br/>order))
+        UC9((Adjust stock))
+        UC10b((Approve<br/>adjustment))
+        UC15((Expiry / low-stock<br/>alerts))
+        UC12((Manage users<br/>& roles))
+        UC13((Configure settings))
+        UC14((Review audit log))
+    end
+
+    SUP(["Supplier<br/>(external)"])
+    SMS(["SMS Gateway<br/>(external)"])
+
+    IO --> UC6
+    IO --> UC7
+    IO --> UC8
+    IO --> UC9
+    PH2 --> UC7
+    PH2 --> UC9
+    MG2 --> UC10b
+    MG2 --> UC15
+    AD --> UC12
+    AD --> UC13
+    AD --> UC14
     UC8 --> SUP
     UC15 --> SMS
 ```
-
-*Role inheritance: Manager can do everything a Pharmacist/Inventory Officer can; Admin
-can do everything (permission matrix in ADR-005).*
 
 ## 2. Use case descriptions (5 primary)
 
@@ -294,7 +322,7 @@ sequenceDiagram
     A->>I: allocate(product, qtyBase)
     I->>DB: SELECT batches … FOR UPDATE (FEFO order)
     I-->>A: [batch allocations]
-    A->>DB: INSERT sale, sale_items, payments,<br/>stock_movements; UPDATE batches
+    A->>DB: INSERT sale, sale_items, payments,<br/>stock_movements + UPDATE batches
     A->>DB: COMMIT
     A-->>W: 201 {receiptNumber, change: 2.00}
     W-->>C: print receipt · show change
