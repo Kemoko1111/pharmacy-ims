@@ -109,16 +109,19 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+// fixed 14-day window ending today (module scope keeps render pure)
+const WINDOW_14D: string[] = (() => {
+  const now = Date.now();
+  return Array.from({ length: 14 }, (_, i) =>
+    new Date(now - (13 - i) * 86_400_000).toISOString().slice(0, 10),
+  );
+})();
+
 function Sparkline({ days }: { days: { day: string; gross: string }[] }) {
-  // pad to a full 14-day window so one busy day doesn't fill the chart
+  // pad to the full window so one busy day doesn't fill the chart
   const byDay = new Map(days.map((d) => [d.day, Number(d.gross)]));
-  const points: number[] = [];
-  const labels: string[] = [];
-  for (let i = 13; i >= 0; i--) {
-    const day = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
-    labels.push(day);
-    points.push(byDay.get(day) ?? 0);
-  }
+  const labels = WINDOW_14D;
+  const points = labels.map((day) => byDay.get(day) ?? 0);
   const w = 560;
   const h = 80;
   const max = Math.max(...points, 1);

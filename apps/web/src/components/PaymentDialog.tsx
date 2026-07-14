@@ -1,18 +1,42 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { fromP, ghs, toP } from '../lib/format';
 
 interface Props {
   totalP: number;
-  onConfirm: (p: { method: 'CASH' | 'MOMO'; tenderedP: number | null }) => Promise<void>;
+  onConfirm: (p: {
+    method: 'CASH' | 'MOMO';
+    tenderedP: number | null;
+    customerId: string | null;
+  }) => Promise<void>;
   onClose: () => void;
+}
+
+interface CustomerHit {
+  id: string;
+  fullName: string;
+  phone: string | null;
 }
 
 /** F4 payment: tender buttons, amount-tendered keypad, change in 40px type. */
 export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
+  const { user } = useAuth();
   const [method, setMethod] = useState<'CASH' | 'MOMO'>('CASH');
   const [tendered, setTendered] = useState('');
   const [busy, setBusy] = useState(false);
+  const [customerQ, setCustomerQ] = useState('');
+  const [customer, setCustomer] = useState<CustomerHit | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Customer records are P/M-only (US-15 / Act 843); cashiers sell anonymous
+  const canAttachCustomer = ['PHARMACIST', 'MANAGER', 'ADMIN'].includes(user?.role ?? '');
+  const { data: customerHits } = useQuery({
+    queryKey: ['customer-search', customerQ],
+    queryFn: () => api<{ data: CustomerHit[] }>(`/customers?q=${encodeURIComponent(customerQ)}&pageSize=5`),
+    enabled: canAttachCustomer && customerQ.length >= 2 && !customer,
+  });
 
   const tenderedP = tendered === '' ? null : toP(tendered);
   const changeP = tenderedP !== null ? tenderedP - totalP : null;
@@ -24,7 +48,11 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
     if (!canConfirm || busy) return;
     setBusy(true);
     try {
-      await onConfirm({ method, tenderedP: method === 'CASH' ? tenderedP : null });
+      await onConfirm({
+        method,
+        tenderedP: method === 'CASH' ? tenderedP : null,
+        customerId: customer?.id ?? null,
+      });
     } finally {
       setBusy(false);
     }
@@ -92,6 +120,42 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
               </p>
             )}
           </>
+        )}
+
+        {canAttachCustomer && (
+          <div className="relative mt-4">
+            <label className="mb-1 block text-sm font-medium text-ink-muted">Customer (optional)</label>
+            {customer ? (
+              <div className="flex items-center justify-between rounded-lg border border-edge bg-bg px-3 py-2">
+                <span>
+                  {customer.fullName} {customer.phone && <span className="text-ink-muted">({customer.phone})</span>}
+                </span>
+                <button onClick={() => setCustomer(null)} className="text-danger">✕</button>
+              </div>
+            ) : (
+              <>
+                <input
+                  value={customerQ}
+                  onChange={(e) => setCustomerQ(e.target.value)}
+                  placeholder="Search name or phone…"
+                  className="w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                {(customerHits?.data ?? []).length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-lg border border-edge bg-surface shadow-lg">
+                    {customerHits!.data.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setCustomer(c)}
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-bg"
+                      >
+                        {c.fullName} {c.phone && <span className="text-ink-muted">({c.phone})</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         <button

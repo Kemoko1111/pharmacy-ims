@@ -153,10 +153,15 @@ export default function Pos() {
   };
 
   // ── Submit sale: online direct, otherwise append-only local queue ─────────
-  const completeSale = async (payment: { method: 'CASH' | 'MOMO'; tenderedP: number | null }) => {
+  const completeSale = async (payment: {
+    method: 'CASH' | 'MOMO';
+    tenderedP: number | null;
+    customerId: string | null;
+  }) => {
     const body = {
       clientSaleId: uuidv7(),
       soldAt: new Date().toISOString(),
+      ...(payment.customerId ? { customerId: payment.customerId } : {}),
       items: cart.lines.map((l) => ({
         productId: l.productId,
         productUnitId: l.unitId,

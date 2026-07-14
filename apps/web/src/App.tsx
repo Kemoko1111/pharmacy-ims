@@ -11,6 +11,7 @@ import Batches from './pages/Batches';
 import Purchasing from './pages/Purchasing';
 import Adjustments from './pages/Adjustments';
 import Reports from './pages/Reports';
+import Customers from './pages/Customers';
 import Users from './pages/Users';
 import Settings from './pages/Settings';
 
@@ -78,6 +79,14 @@ export default function App() {
           }
         />
         <Route path="sales" element={<SalesHistory />} />
+        <Route
+          path="customers"
+          element={
+            <Protected roles={['PHARMACIST', 'MANAGER']}>
+              <Customers />
+            </Protected>
+          }
+        />
         <Route
           path="reports"
           element={
