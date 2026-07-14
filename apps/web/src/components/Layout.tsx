@@ -3,11 +3,15 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useOnline } from '../lib/useOnline';
 import { refreshSnapshot } from '../lib/offline';
+import { NotificationsBell } from './NotificationsBell';
 
 const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/pos', label: 'POS', roles: ['CASHIER', 'PHARMACIST', 'MANAGER'] },
   { to: '/dashboard', label: 'Dashboard', roles: ['MANAGER', 'PHARMACIST'] },
   { to: '/products', label: 'Products' },
+  { to: '/batches', label: 'Batches', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
+  { to: '/purchasing', label: 'Purchasing', roles: ['INVENTORY_OFFICER', 'MANAGER'] },
+  { to: '/adjustments', label: 'Adjustments', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
   { to: '/sales', label: 'Sales' },
 ];
 
@@ -77,6 +81,7 @@ export function Layout() {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
+          {['MANAGER', 'PHARMACIST', 'ADMIN'].includes(user?.role ?? '') && <NotificationsBell />}
           <button
             onClick={toggle}
             className="rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
