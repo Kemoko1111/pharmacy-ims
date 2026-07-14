@@ -1,8 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { v7 as uuid } from 'uuid';
 import {
-  CatalogFixture,
   authHeader,
   createTestApp,
   createUser,

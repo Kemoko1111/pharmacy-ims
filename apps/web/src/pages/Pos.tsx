@@ -147,7 +147,6 @@ export default function Pos() {
       addProduct(results[highlight], null);
     }
   };
-  useEffect(() => setHighlight(0), [debouncedQ]);
 
   // ── Submit sale: online direct, otherwise append-only local queue ─────────
   const completeSale = async (payment: { method: 'CASH' | 'MOMO'; tenderedP: number | null }) => {
@@ -232,7 +231,10 @@ export default function Pos() {
           ref={searchRef}
           autoFocus
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setHighlight(0);
+          }}
           onKeyDown={onSearchKey}
           placeholder="🔍  Scan barcode or type name / generic…  ( / )"
           className="w-full rounded-lg border border-edge bg-surface px-4 py-3 text-lg outline-none focus:border-primary"

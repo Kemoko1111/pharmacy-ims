@@ -28,6 +28,9 @@ interface Category {
 
 const CAN_EDIT = ['INVENTORY_OFFICER', 'MANAGER', 'ADMIN'];
 
+// day-resolution "now" for expiry chips; module scope keeps render pure
+const NOW = Date.now();
+
 export default function Products() {
   const { user } = useAuth();
   const [params] = useSearchParams();
@@ -81,7 +84,7 @@ export default function Products() {
             {(data?.data ?? []).map((p) => {
               const low = p.qtyOnHand <= p.reorderLevel;
               const daysToExpiry = p.nearestExpiry
-                ? Math.ceil((new Date(p.nearestExpiry).getTime() - Date.now()) / 86_400_000)
+                ? Math.ceil((new Date(p.nearestExpiry).getTime() - NOW) / 86_400_000)
                 : null;
               return (
                 <tr key={p.id} className="border-b border-edge last:border-0 hover:bg-bg">

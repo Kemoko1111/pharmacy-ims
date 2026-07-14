@@ -1,0 +1,60 @@
+# Lint + test on every PR (project-plan.md §6); formalized as the Week 8
+# CI/CD deliverable. Deploys to Railway/Vercel hang off main once accounts exist.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pharmatrack
+          POSTGRES_PASSWORD: pharmatrack
+          POSTGRES_DB: pharmatrack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pharmatrack"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared contract
+        run: pnpm --filter @pharmatrack/shared build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Generate Prisma client
+        run: pnpm --filter @pharmatrack/api db:generate
+
+      - name: API build
+        run: pnpm --filter @pharmatrack/api build
+
+      - name: API e2e tests
+        run: pnpm --filter @pharmatrack/api test
+        env:
+          TEST_DATABASE_URL: postgresql://pharmatrack:pharmatrack@localhost:5432/pharmatrack_test
+
+      - name: Web build
+        run: pnpm --filter @pharmatrack/web build
