@@ -81,7 +81,7 @@ export default function Dashboard() {
       {/* 14-day trend — inline SVG, no chart lib on the 3G path */}
       <h2 className="mb-2 mt-6 font-semibold">📈 Sales, last 14 days</h2>
       <div className="rounded-xl border border-edge bg-surface p-4">
-        <Sparkline points={data.trend14d.map((t) => Number(t.gross))} labels={data.trend14d.map((t) => t.day)} />
+        <Sparkline days={data.trend14d} />
       </div>
 
       <h2 className="mb-2 mt-6 font-semibold">🏆 Top sellers this week</h2>
@@ -109,8 +109,16 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Sparkline({ points, labels }: { points: number[]; labels: string[] }) {
-  if (points.length === 0) return <p className="text-ink-muted">No data yet.</p>;
+function Sparkline({ days }: { days: { day: string; gross: string }[] }) {
+  // pad to a full 14-day window so one busy day doesn't fill the chart
+  const byDay = new Map(days.map((d) => [d.day, Number(d.gross)]));
+  const points: number[] = [];
+  const labels: string[] = [];
+  for (let i = 13; i >= 0; i--) {
+    const day = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+    labels.push(day);
+    points.push(byDay.get(day) ?? 0);
+  }
   const w = 560;
   const h = 80;
   const max = Math.max(...points, 1);

@@ -50,6 +50,10 @@ export default function Pos() {
     queryKey: ['pos-search', debouncedQ],
     queryFn: () => searchProducts(debouncedQ),
     enabled: debouncedQ.length >= 2,
+    // run even while offline — searchProducts falls back to the Dexie
+    // catalogue itself (react-query's default networkMode would pause it)
+    networkMode: 'always',
+    retry: false,
   });
 
   const totals = useMemo(() => cartTotals(cart.lines), [cart.lines]);
