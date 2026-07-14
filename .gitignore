@@ -1,0 +1,29 @@
+# deps / builds
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# env & secrets — .env.example is the only committed env file
+.env
+.env.*
+!.env.example
+
+# local databases / dumps
+*.sqlite
+*.dump
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# logs
+*.log
+pnpm-debug.log*
+
+# generated
+apps/web/dev-dist/
+apps/api/generated/

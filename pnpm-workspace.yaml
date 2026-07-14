@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - esbuild
+  - "@embedded-postgres/darwin-x64"
+  - "@embedded-postgres/darwin-arm64"
+  - "@embedded-postgres/linux-x64"
