@@ -13,6 +13,9 @@ const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/purchasing', label: 'Purchasing', roles: ['INVENTORY_OFFICER', 'MANAGER'] },
   { to: '/adjustments', label: 'Adjustments', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
   { to: '/sales', label: 'Sales' },
+  { to: '/reports', label: 'Reports', roles: ['MANAGER', 'PHARMACIST'] },
+  { to: '/users', label: 'Users', roles: [] }, // ADMIN only (implicit pass)
+  { to: '/settings', label: 'Settings', roles: [] },
 ];
 
 function useTheme() {

@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsISO8601,
   IsInt,
@@ -91,6 +92,33 @@ export class SyncSalesDto {
 }
 
 export class VoidSaleDto {
+  @IsString()
+  @MaxLength(300)
+  reason: string;
+}
+
+export class ReturnItemDto {
+  @IsUUID()
+  saleItemId: string;
+
+  @IsInt()
+  @Min(1)
+  qtyBase: number;
+
+  @IsBoolean()
+  restock: boolean;
+}
+
+export class CreateReturnDto {
+  @IsUUID()
+  saleId: string;
+
+  @IsArray()
+  @ArrayNotEmpty()
+  @ValidateNested({ each: true })
+  @Type(() => ReturnItemDto)
+  items: ReturnItemDto[];
+
   @IsString()
   @MaxLength(300)
   reason: string;

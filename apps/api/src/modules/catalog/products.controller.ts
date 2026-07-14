@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,8 +10,12 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CatalogService } from './catalog.service';
+import { ImportService } from './import.service';
 import { AddBarcodeDto, AddUnitDto, CreateProductDto, ProductsQuery, UpdateProductDto } from './dto';
 import { Roles } from '../../common/roles.decorator';
 import { CurrentUser } from '../../common/current-user.decorator';
@@ -18,7 +23,26 @@ import type { RequestUser } from '../../common/jwt-auth.guard';
 
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly importer: ImportService,
+  ) {}
+
+  /** US-16: QuickBooks POS item-list CSV. `?importStock=true` also creates
+   *  placeholder OPENING batches (flagged for pharmacist review). */
+  @Post('import')
+  @Roles('ADMIN')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  import(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Query('importStock') importStock: string | undefined,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException({ code: 'NO_FILE', message: 'Attach the CSV as "file"' });
+    }
+    return this.importer.importCsv(file.buffer, importStock === 'true', actor);
+  }
 
   @Get()
   list(@Query() q: ProductsQuery) {

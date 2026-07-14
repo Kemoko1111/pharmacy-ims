@@ -10,6 +10,9 @@ import SalesHistory from './pages/SalesHistory';
 import Batches from './pages/Batches';
 import Purchasing from './pages/Purchasing';
 import Adjustments from './pages/Adjustments';
+import Reports from './pages/Reports';
+import Users from './pages/Users';
+import Settings from './pages/Settings';
 
 function Protected({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, ready } = useAuth();
@@ -75,6 +78,30 @@ export default function App() {
           }
         />
         <Route path="sales" element={<SalesHistory />} />
+        <Route
+          path="reports"
+          element={
+            <Protected roles={['MANAGER', 'PHARMACIST']}>
+              <Reports />
+            </Protected>
+          }
+        />
+        <Route
+          path="users"
+          element={
+            <Protected roles={[]}>
+              <Users />
+            </Protected>
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <Protected roles={[]}>
+              <Settings />
+            </Protected>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

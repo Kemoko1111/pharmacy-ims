@@ -14,7 +14,7 @@ interface SaleRow {
   soldAt: string;
   syncedOffline: boolean;
   payments: { method: string }[];
-  items: { productName: string; quantity: number; unitName: string }[];
+  items: { id: string; productName: string; quantity: number; qtyBase: number; unitName: string; baseUnit?: string }[];
 }
 
 export default function SalesHistory() {
@@ -23,7 +23,9 @@ export default function SalesHistory() {
   const queryClient = useQueryClient();
   const [q, setQ] = useState('');
   const [voiding, setVoiding] = useState<SaleRow | null>(null);
+  const [returning, setReturning] = useState<SaleRow | null>(null);
   const isManager = user?.role === 'MANAGER' || user?.role === 'ADMIN';
+  const canReturn = isManager || user?.role === 'PHARMACIST';
 
   const { data } = useQuery({
     queryKey: ['sales', q],
@@ -86,6 +88,11 @@ export default function SalesHistory() {
                   >
                     Reprint
                   </button>
+                  {canReturn && s.status === 'COMPLETED' && (
+                    <button onClick={() => setReturning(s)} className="ml-3 text-warn hover:underline">
+                      Return
+                    </button>
+                  )}
                   {isManager && s.status === 'COMPLETED' && (
                     <button onClick={() => setVoiding(s)} className="ml-3 text-danger hover:underline">
                       Void
@@ -109,6 +116,101 @@ export default function SalesHistory() {
           }}
         />
       )}
+      {returning && (
+        <ReturnDialog
+          sale={returning}
+          onClose={() => setReturning(null)}
+          onDone={() => {
+            setReturning(null);
+            queryClient.invalidateQueries({ queryKey: ['sales'] });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** US-14: per-line return with restock choice; the signed-in P/M is the approver. */
+function ReturnDialog({ sale, onClose, onDone }: { sale: SaleRow; onClose: () => void; onDone: () => void }) {
+  const { user } = useAuth();
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState(
+    sale.items
+      .filter((i) => i.qtyBase > 0)
+      .map((i) => ({ saleItemId: i.id, label: `${i.productName} (${i.qtyBase} base units sold)`, max: i.qtyBase, qty: '0', restock: true })),
+  );
+
+  const post = useMutation({
+    mutationFn: () =>
+      api('/returns', {
+        method: 'POST',
+        body: {
+          saleId: sale.id,
+          reason,
+          items: rows
+            .filter((r) => Number(r.qty) > 0)
+            .map((r) => ({ saleItemId: r.saleItemId, qtyBase: Number(r.qty), restock: r.restock })),
+        },
+      }),
+    onSuccess: onDone,
+    onError: (err) => setError(err instanceof ApiError ? err.message : 'Return failed'),
+  });
+
+  const anyQty = rows.some((r) => Number(r.qty) > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl border border-edge bg-surface p-6" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-bold text-warn">Return against {sale.receiptNumber}</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          Approver: <b>{user?.fullName}</b>. Untick restock for damaged/unsellable items.
+        </p>
+
+        <div className="mt-4 space-y-2">
+          {rows.map((r, idx) => (
+            <div key={r.saleItemId} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">{r.label}</span>
+              <input
+                type="number"
+                min="0"
+                max={r.max}
+                value={r.qty}
+                onChange={(e) => setRows((rs) => rs.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))}
+                className="w-20 rounded border border-edge bg-bg px-2 py-1 text-center"
+              />
+              <label className="flex items-center gap-1 text-ink-muted">
+                <input
+                  type="checkbox"
+                  checked={r.restock}
+                  onChange={(e) => setRows((rs) => rs.map((x, i) => (i === idx ? { ...x, restock: e.target.checked } : x)))}
+                />
+                restock
+              </label>
+            </div>
+          ))}
+        </div>
+
+        <label className="mb-1 mt-4 block text-sm font-medium">Reason *</label>
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="w-full rounded-lg border border-edge bg-bg px-3 py-2 outline-none focus:border-warn"
+        />
+
+        {error && <p className="mt-3 rounded bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-edge px-4 py-2">Cancel</button>
+          <button
+            disabled={!anyQty || !reason.trim() || post.isPending}
+            onClick={() => post.mutate()}
+            className="rounded-lg bg-warn px-4 py-2 font-semibold text-white disabled:opacity-50 dark:text-slate-900"
+          >
+            {post.isPending ? 'Posting…' : 'Post return'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

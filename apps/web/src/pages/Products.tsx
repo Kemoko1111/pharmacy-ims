@@ -66,6 +66,7 @@ export default function Products() {
             + New product
           </button>
         )}
+        {user?.role === 'ADMIN' && <QbImportButton />}
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-edge bg-surface">
@@ -137,6 +138,99 @@ export default function Products() {
 
       {editing && <ProductForm product={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
     </div>
+  );
+}
+
+/** US-16: QuickBooks item-list CSV upload with per-row error report. */
+function QbImportButton() {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    imported: number;
+    skipped: number;
+    errors: { row: number; message: string }[];
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = async (file: File, importStock: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1'}/products/import?importStock=${importStock}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('pt-access')}` },
+          body: form,
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error?.message ?? 'Import failed');
+      setResult(json);
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <label className="cursor-pointer rounded-lg border border-primary px-4 py-2 font-semibold text-primary">
+        {busy ? 'Importing…' : 'Import QB CSV'}
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          disabled={busy}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            const withStock = confirm(
+              'Also import on-hand quantities as placeholder batches?\n\n' +
+                'OK = yes (batches flagged QB-IMPORT for pharmacist review)\nCancel = catalog only',
+            );
+            void upload(file, withStock);
+          }}
+        />
+      </label>
+
+      {(result || error) && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={() => { setResult(null); setError(null); }}>
+          <div className="w-full max-w-md rounded-xl border border-edge bg-surface p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold">QuickBooks import</h2>
+            {error && <p className="mt-3 rounded bg-danger/10 px-3 py-2 text-danger">{error}</p>}
+            {result && (
+              <>
+                <p className="mt-2">
+                  <b className="text-ok">{result.imported} imported</b> · {result.skipped} skipped (already exist)
+                  {result.errors.length > 0 && <> · <b className="text-warn">{result.errors.length} rows with problems</b></>}
+                </p>
+                {result.errors.length > 0 && (
+                  <div className="mt-2 max-h-48 overflow-auto rounded border border-edge p-2 text-sm">
+                    {result.errors.map((e, i) => (
+                      <div key={i} className="text-ink-muted">
+                        Row {e.row}: {e.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            <button
+              onClick={() => { setResult(null); setError(null); }}
+              className="mt-4 w-full rounded-lg bg-primary py-2 font-semibold text-white dark:text-slate-900"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

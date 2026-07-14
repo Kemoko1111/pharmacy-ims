@@ -11,7 +11,8 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { SalesService } from './sales.service';
-import { SaleCreateDto, SyncSalesDto, VoidSaleDto } from './dto';
+import { ReturnsService } from './returns.service';
+import { CreateReturnDto, SaleCreateDto, SyncSalesDto, VoidSaleDto } from './dto';
 import { Roles } from '../../common/roles.decorator';
 import { CurrentUser } from '../../common/current-user.decorator';
 import type { RequestUser } from '../../common/jwt-auth.guard';
@@ -40,7 +41,17 @@ class ReceiptQuery {
 
 @Controller()
 export class SalesController {
-  constructor(private readonly sales: SalesService) {}
+  constructor(
+    private readonly sales: SalesService,
+    private readonly returns: ReturnsService,
+  ) {}
+
+  /** US-14: the posting role (Pharmacist/Manager) is the approval. */
+  @Post('returns')
+  @Roles('PHARMACIST', 'MANAGER')
+  createReturn(@Body() dto: CreateReturnDto, @CurrentUser() actor: RequestUser) {
+    return this.returns.create(dto, actor);
+  }
 
   /** 201 created · 409 duplicate clientSaleId returns the existing sale */
   @Post('sales')

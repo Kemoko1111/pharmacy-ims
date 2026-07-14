@@ -15,6 +15,7 @@ import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { PurchasingModule } from './modules/purchasing/purchasing.module';
 import { AdjustmentsModule } from './modules/adjustments/adjustments.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
@@ -50,6 +51,7 @@ import { RolesGuard } from './common/roles.guard';
     PurchasingModule,
     AdjustmentsModule,
     NotificationsModule,
+    SettingsModule,
     SalesModule,
     ReportingModule,
   ],
