@@ -86,16 +86,57 @@ POS — accessible from the till, a phone, or the owner's laptop.
 | Barcode | USB scanner as keyboard wedge; `@zxing/browser` camera scanning on mobile |
 | Receipts | 80 mm thermal print via browser print CSS; SMS receipt/alerts via Africa's Talking (Week 5 integration) |
 
-## Repository layout (planned)
+## Repository layout
 
 ```
 pharmacy-ims/
 ├── docs/                  # everything above
 ├── apps/
-│   ├── api/               # NestJS modular monolith
+│   ├── api/               # NestJS modular monolith (auth, catalog, inventory, sales, reporting, audit)
 │   └── web/               # React PWA (POS + back office)
 ├── packages/
-│   └── shared/            # shared types, DTO zod schemas
+│   └── shared/            # shared TypeScript API contract
+├── docker-compose.yml     # PostgreSQL 16 for local dev (option A)
 ├── .env.example           # committed; .env is gitignored
 └── README.md
 ```
+
+## Running it locally
+
+Prereqs: Node ≥ 22, pnpm ≥ 9. PostgreSQL comes from Docker **or** the zero-install
+embedded binary — pick one.
+
+```bash
+pnpm install
+pnpm --filter @pharmatrack/shared build
+
+# 1. Database (pick ONE)
+docker compose up -d                                  # A: Docker
+pnpm --filter @pharmatrack/api db:local               # B: embedded PG 16, keep the terminal open
+
+# 2. API — migrate, seed, run
+cp .env.example apps/api/.env                         # then edit secrets
+pnpm --filter @pharmatrack/api db:deploy
+pnpm --filter @pharmatrack/api db:seed
+pnpm --filter @pharmatrack/api dev                    # http://localhost:3000
+
+# 3. Web
+pnpm --filter @pharmatrack/web dev                    # http://localhost:5173
+```
+
+Seed logins (password `ChangeMe123!`): `admin`, `boateng` (Manager), `adjoa`
+(Pharmacist), `kwame` (Inventory), `akosua` (Cashier).
+
+Tests (Jest + Supertest e2e, needs the database up):
+
+```bash
+pnpm --filter @pharmatrack/api test
+```
+
+### Demo arc (matches the pitch walk-through)
+
+Sign in as `akosua` → POS: scan/search Paracetamol, add 2 strips, **F4**, cash 20.00,
+change shows, confirm → 80 mm receipt prints. Kill the network → sell again → amber
+OFFLINE badge + unsynced counter; reconnect → queue drains through the idempotent
+`/sync/sales`. Sign in as `boateng` on a phone → Dashboard shows today's takings,
+low-stock, expiring (with GHS at risk) and the expired-batch alert.

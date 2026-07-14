@@ -1,0 +1,77 @@
+@import 'tailwindcss';
+
+/* Theme toggle strategy: `.dark` class on <html>, set pre-paint in index.html */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Color tokens — wireframes-ui-ux.md §Color & theme (WCAG AA pairs) */
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --primary: #0d9488;
+  --warn: #d97706;
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+}
+
+.dark {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --primary: #2dd4bf;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --ok: #4ade80;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border: #334155;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-primary: var(--primary);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-ink: var(--text);
+  --color-ink-muted: var(--text-muted);
+  --color-edge: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  /* Big targets, high contrast (wireframes §Design principles) */
+  @apply bg-bg text-ink text-[16px] antialiased;
+}
+
+/* ── 80 mm receipt print route (ADR-008) ──────────────────────────────────── */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #receipt,
+  #receipt * {
+    visibility: visible;
+  }
+  #receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #000;
+    background: #fff;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 2mm;
+  }
+}
