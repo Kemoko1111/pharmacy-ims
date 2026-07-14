@@ -16,6 +16,27 @@ import { Roles } from '../../common/roles.decorator';
 import { CurrentUser } from '../../common/current-user.decorator';
 import type { RequestUser } from '../../common/jwt-auth.guard';
 import { PageQuery } from '../../common/pagination';
+import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
+
+class SalesQuery extends PageQuery {
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @IsOptional()
+  @IsUUID()
+  cashierId?: string;
+}
+
+class ReceiptQuery {
+  @IsOptional()
+  @IsString()
+  reprint?: string;
+}
 
 @Controller()
 export class SalesController {
@@ -39,19 +60,13 @@ export class SalesController {
 
   @Get('sales')
   @Roles('CASHIER', 'PHARMACIST', 'MANAGER')
-  list(
-    @Query() q: PageQuery,
-    @CurrentUser() actor: RequestUser,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('cashierId') cashierId?: string,
-  ) {
+  list(@Query() q: SalesQuery, @CurrentUser() actor: RequestUser) {
     return this.sales.listSales(actor, {
       page: q.page ?? 1,
       pageSize: q.pageSize ?? 25,
-      from,
-      to,
-      cashierId,
+      from: q.from,
+      to: q.to,
+      cashierId: q.cashierId,
       q: q.q,
     });
   }
@@ -67,9 +82,9 @@ export class SalesController {
   receipt(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor: RequestUser,
-    @Query('reprint') reprint?: string,
+    @Query() q: ReceiptQuery,
   ) {
-    return this.sales.receipt(id, actor, reprint === 'true');
+    return this.sales.receipt(id, actor, q.reprint === 'true');
   }
 
   @Post('sales/:id/void')

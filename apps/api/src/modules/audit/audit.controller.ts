@@ -1,14 +1,29 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
 import { Roles } from '../../common/roles.decorator';
 import { PageQuery, listEnvelope } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 
 class AuditQuery extends PageQuery {
+  @IsOptional()
+  @IsString()
   entity?: string;
+
+  @IsOptional()
+  @IsString()
   entityId?: string;
+
+  @IsOptional()
+  @IsUUID()
   userId?: string;
+
+  @IsOptional()
+  @IsDateString()
   from?: string;
+
+  @IsOptional()
+  @IsDateString()
   to?: string;
 }
 

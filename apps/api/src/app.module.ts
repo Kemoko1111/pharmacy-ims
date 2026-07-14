@@ -11,6 +11,10 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { SuppliersModule } from './modules/suppliers/suppliers.module';
+import { PurchasingModule } from './modules/purchasing/purchasing.module';
+import { AdjustmentsModule } from './modules/adjustments/adjustments.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
@@ -42,6 +46,10 @@ import { RolesGuard } from './common/roles.guard';
     UsersModule,
     CatalogModule,
     InventoryModule,
+    SuppliersModule,
+    PurchasingModule,
+    AdjustmentsModule,
+    NotificationsModule,
     SalesModule,
     ReportingModule,
   ],

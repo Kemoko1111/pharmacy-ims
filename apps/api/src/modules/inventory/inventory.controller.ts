@@ -22,6 +22,16 @@ class BatchesQuery extends PageQuery {
   status?: string;
 }
 
+class MovementsQuery extends PageQuery {
+  @IsOptional()
+  @IsUUID()
+  productId?: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
+}
+
 @Controller()
 export class InventoryController {
   constructor(private readonly prisma: PrismaService) {}
@@ -91,16 +101,12 @@ export class InventoryController {
 
   @Get('inventory/movements')
   @Roles('MANAGER')
-  async movements(
-    @Query() q: PageQuery,
-    @Query('productId') productId?: string,
-    @Query('type') type?: string,
-  ) {
+  async movements(@Query() q: MovementsQuery) {
     const page = q.page ?? 1;
     const pageSize = q.pageSize ?? 50;
     const where: Prisma.StockMovementWhereInput = {
-      ...(productId ? { productId } : {}),
-      ...(type ? { type: type as Prisma.StockMovementWhereInput['type'] } : {}),
+      ...(q.productId ? { productId: q.productId } : {}),
+      ...(q.type ? { type: q.type as Prisma.StockMovementWhereInput['type'] } : {}),
     };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.stockMovement.findMany({

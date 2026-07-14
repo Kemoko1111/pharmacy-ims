@@ -6,4 +6,5 @@ process.env.JWT_ACCESS_SECRET = 'test-access-secret';
 process.env.JWT_ACCESS_TTL = '15m';
 process.env.JWT_REFRESH_TTL_HOURS = '12';
 process.env.THROTTLE_DISABLED = 'true';
+process.env.CRON_DISABLED = 'true';
 process.env.LOG_LEVEL = 'silent';
