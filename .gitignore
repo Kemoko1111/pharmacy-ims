@@ -27,3 +27,7 @@ pnpm-debug.log*
 # generated
 apps/web/dev-dist/
 apps/api/generated/
+
+# playwright
+apps/web/test-results/
+apps/web/playwright-report/
