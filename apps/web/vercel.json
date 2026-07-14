@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd ../.. && pnpm install && pnpm --filter @pharmatrack/shared build && pnpm --filter @pharmatrack/web build",
+  "outputDirectory": "dist",
+  "rewrites": [{ "source": "/((?!assets|icon-|manifest|sw.js|workbox).*)", "destination": "/index.html" }]
+}

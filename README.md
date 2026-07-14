@@ -133,6 +133,24 @@ Tests (Jest + Supertest e2e, needs the database up):
 pnpm --filter @pharmatrack/api test
 ```
 
+### UI smoke tests (Playwright)
+
+With the stack running: `pnpm --filter @pharmatrack/web test:ui` — drives the full demo
+arc headless (login → sale → offline queue → reconnect sync → dashboard → admin).
+
+### Deploying (ADR-007)
+
+- **API + DB → Railway:** create a project with a Postgres plugin, point it at this repo;
+  `apps/api/railway.json` selects the Dockerfile build and `/health` checks. Set env:
+  `DATABASE_URL` (from the plugin), `JWT_ACCESS_SECRET` (openssl rand -hex 32),
+  `CORS_ORIGIN` (the Vercel URL), optionally `AT_USERNAME`/`AT_API_KEY` for real SMS.
+  Migrations run automatically on boot.
+- **Web → Vercel:** import the repo, set the project root to `apps/web`
+  (`vercel.json` handles the monorepo build + SPA rewrites). Set `VITE_API_URL` to
+  `https://<railway-app>/api/v1`.
+- **Load test (Week 7):** `k6 run scripts/load/k6-pos.js -e BASE=<api-url>` — thresholds
+  encode the <300 ms p95 search target. OWASP checklist: `docs/week7/owasp-checklist.md`.
+
 ### Demo arc (matches the pitch walk-through)
 
 Sign in as `akosua` → POS: scan/search Paracetamol, add 2 strips, **F4**, cash 20.00,
