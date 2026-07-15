@@ -41,4 +41,11 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
     },
   },
+  {
+    // static browser assets served as-is (pre-paint theme script)
+    files: ['apps/web/public/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.browser },
+    },
+  },
 );

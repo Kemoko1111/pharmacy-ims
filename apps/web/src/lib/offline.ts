@@ -30,9 +30,18 @@ export interface QueuedSale {
   cashierName: string;
 }
 
+export interface HeldSale {
+  id: string;
+  heldAt: string;
+  cashierId: string;
+  label: string; // first line + count, shown in the recall list
+  lines: unknown[]; // CartLine[] — stored opaque to avoid a store↔lib cycle
+}
+
 class PtDb extends Dexie {
   catalog!: Table<CachedProduct, string>;
   saleQueue!: Table<QueuedSale, string>;
+  heldSales!: Table<HeldSale, string>;
   meta!: Table<{ key: string; value: string }, string>;
 
   constructor() {
@@ -40,6 +49,14 @@ class PtDb extends Dexie {
     this.version(1).stores({
       catalog: 'id, name, genericName',
       saleQueue: 'clientSaleId, queuedAt',
+      meta: 'key',
+    });
+    // F9 hold/recall — parked carts survive a reload (till reality: browser
+    // crashes mid-queue happen)
+    this.version(2).stores({
+      catalog: 'id, name, genericName',
+      saleQueue: 'clientSaleId, queuedAt',
+      heldSales: 'id, heldAt, cashierId',
       meta: 'key',
     });
   }

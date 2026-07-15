@@ -211,6 +211,34 @@ describe('Sales / POS (US-06, US-07, ADR-006)', () => {
     expect(compensating?.qtyDelta).toBe(20);
   });
 
+  it('discounts are role-gated: cashier 422, pharmacist allowed (wireframe F8)', async () => {
+    const fix = await seedCatalog();
+    await createUser(`ph-${Date.now()}`, 'PHARMACIST');
+    const username = (await prisma.user.findFirst({ where: { role: 'PHARMACIST' }, orderBy: { createdAt: 'desc' } }))!.username;
+    const pharmacist = await authHeader(app, username);
+
+    const discounted = (auth: Record<string, string>) =>
+      request(app.getHttpServer())
+        .post('/api/v1/sales')
+        .set(auth)
+        .send(
+          saleBody(fix, {
+            items: [
+              { productId: fix.productId, productUnitId: fix.stripUnitId, quantity: 2, unitPrice: '5.00', discount: '1.00' },
+            ],
+            payments: [{ method: 'CASH', amount: '9.00' }],
+          }),
+        );
+
+    const asCashier = await discounted(cashier);
+    expect(asCashier.status).toBe(422);
+    expect(asCashier.body.error.code).toBe('DISCOUNT_FORBIDDEN');
+
+    const asPharmacist = await discounted(pharmacist);
+    expect(asPharmacist.status).toBe(201);
+    expect(asPharmacist.body.discountTotal).toBe('1');
+  });
+
   it('VAT-inclusive math: VAT-applies lines carry the VAT portion in vat_total, total unchanged', async () => {
     const fix = await seedCatalog();
     await prisma.product.update({ where: { id: fix.productId }, data: { vatApplies: true } });

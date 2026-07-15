@@ -87,6 +87,16 @@ export class ProductsController {
     return this.catalog.addUnit(id, dto, actor);
   }
 
+  @Post(':id/units/:unitId/retire')
+  @Roles('MANAGER')
+  retireUnit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('unitId', ParseUUIDPipe) unitId: string,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    return this.catalog.retireUnit(id, unitId, actor);
+  }
+
   @Post(':id/barcodes')
   @Roles('INVENTORY_OFFICER', 'MANAGER')
   addBarcode(

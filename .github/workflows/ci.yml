@@ -45,6 +45,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Dependency audit (OWASP A06)
+        run: pnpm audit --audit-level high
+
       - name: Generate Prisma client
         run: pnpm --filter @pharmatrack/api db:generate
 

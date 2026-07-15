@@ -2,5 +2,19 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd ../.. && pnpm install && pnpm --filter @pharmatrack/shared build && pnpm --filter @pharmatrack/web build",
   "outputDirectory": "dist",
-  "rewrites": [{ "source": "/((?!assets|icon-|manifest|sw.js|workbox).*)", "destination": "/index.html" }]
+  "rewrites": [{ "source": "/((?!assets|icon-|favicon|theme.js|manifest|sw.js|workbox).*)", "destination": "/index.html" }],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.up.railway.app; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(self), geolocation=(), microphone=()" }
+      ]
+    }
+  ]
 }

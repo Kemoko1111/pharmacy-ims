@@ -12,8 +12,10 @@ import {
   searchCatalogOffline,
 } from '../lib/offline';
 import { CartLine, cartTotals, useCart } from '../stores/cart';
+import { db } from '../lib/offline';
 import { fromP, ghs, toP } from '../lib/format';
 import { PaymentDialog } from '../components/PaymentDialog';
+import { HoldRecallDialog } from '../components/HoldRecallDialog';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -43,8 +45,17 @@ export default function Pos() {
   const debouncedQ = useDebounced(q, 200);
   const [highlight, setHighlight] = useState(0);
   const [payOpen, setPayOpen] = useState(false);
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [heldCount, setHeldCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    if (!holdOpen) {
+      db.heldSales.where('cashierId').equals(user.id).count().then(setHeldCount).catch(() => {});
+    }
+  }, [user, holdOpen]);
 
   const { data: results = [] } = useQuery({
     queryKey: ['pos-search', debouncedQ],
@@ -126,6 +137,9 @@ export default function Pos() {
       } else if (e.key === 'F8' && cart.selectedKey) {
         e.preventDefault();
         document.getElementById(`disc-${cart.selectedKey}`)?.focus();
+      } else if (e.key === 'F9') {
+        e.preventDefault();
+        setHoldOpen((o) => !o);
       } else if (e.key === 'Delete' && cart.selectedKey) {
         const target = document.activeElement?.tagName;
         if (target !== 'INPUT') {
@@ -317,8 +331,17 @@ export default function Pos() {
 
       {/* ── Right: the sale ───────────────────────────────────────────────── */}
       <section className="flex w-[26rem] shrink-0 flex-col bg-surface">
-        <div className="border-b border-edge px-4 py-3 font-semibold">
-          SALE <span className="text-ink-muted">(new)</span>
+        <div className="flex items-center border-b border-edge px-4 py-3 font-semibold">
+          SALE <span className="ml-1 text-ink-muted">(new)</span>
+          {heldCount > 0 && (
+            <button
+              onClick={() => setHoldOpen(true)}
+              className="ml-auto rounded-full bg-warn/15 px-2.5 py-0.5 text-sm font-semibold text-warn"
+              title="Recall a held sale (F9)"
+            >
+              ⏸ {heldCount} on hold
+            </button>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
@@ -356,12 +379,16 @@ export default function Pos() {
       {payOpen && (
         <PaymentDialog totalP={totals.totalP} onConfirm={completeSale} onClose={() => setPayOpen(false)} />
       )}
+      {holdOpen && user && <HoldRecallDialog cashierId={user.id} onClose={() => setHoldOpen(false)} />}
     </div>
   );
 }
 
 function CartRow({ line, selected }: { line: CartLine; selected: boolean }) {
   const cart = useCart();
+  const { user } = useAuth();
+  // F8 discounts are role-gated: cashiers ring full price (server enforces too)
+  const canDiscount = user?.role !== 'CASHIER';
   const lineTotalP = toP(line.unitPrice) * line.quantity - toP(line.discount || '0');
   return (
     <div
@@ -384,24 +411,26 @@ function CartRow({ line, selected }: { line: CartLine; selected: boolean }) {
           className="w-16 rounded border border-edge bg-bg px-1.5 py-0.5 text-center"
         />
         <span>× {line.unitName} @ {ghs(line.unitPrice)}</span>
-        <label className="ml-auto flex items-center gap-1">
-          disc
-          <input
-            id={`disc-${line.key}`}
-            type="number"
-            min={0}
-            step="0.1"
-            value={line.discount}
-            onChange={(e) => cart.setDiscount(line.key, e.target.value)}
-            className="w-16 rounded border border-edge bg-bg px-1.5 py-0.5 text-center"
-          />
-        </label>
+        {canDiscount && (
+          <label className="ml-auto flex items-center gap-1">
+            disc
+            <input
+              id={`disc-${line.key}`}
+              type="number"
+              min={0}
+              step="0.1"
+              value={line.discount}
+              onChange={(e) => cart.setDiscount(line.key, e.target.value)}
+              className="w-16 rounded border border-edge bg-bg px-1.5 py-0.5 text-center"
+            />
+          </label>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
             cart.remove(line.key);
           }}
-          className="text-danger"
+          className={`${canDiscount ? '' : 'ml-auto '}text-danger`}
           title="Remove line (Del)"
         >
           ✕

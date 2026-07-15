@@ -89,6 +89,28 @@ test('offline: sale queues locally, badge shows, reconnect drains to 0', async (
   await expect(page.getByText(/unsynced/)).toBeHidden({ timeout: 10_000 });
 });
 
+test('F9 hold/recall: park the sale, badge shows, recall restores the cart', async ({ page }) => {
+  await login(page, 'akosua');
+  await expect(page).toHaveURL(/\/pos/);
+
+  const search = page.getByPlaceholder(/scan barcode or type/i);
+  await search.fill('paracetamol 500');
+  await page.getByRole('button', { name: /strip GHS/ }).first().click();
+  await expect(page.getByText('TOTAL', { exact: true })).toBeVisible();
+
+  await page.keyboard.press('F9');
+  await page.getByRole('button', { name: /hold current sale/i }).click();
+  await page.keyboard.press('Escape');
+
+  await expect(page.getByText(/1 on hold/)).toBeVisible();
+  await expect(page.getByText('Scan an item or search to begin')).toBeVisible();
+
+  await page.keyboard.press('F9');
+  await page.getByRole('button', { name: /^Recall$/ }).click();
+  await expect(page.getByText('GHS 5.00').first()).toBeVisible();
+  await expect(page.getByText(/on hold/)).toBeHidden();
+});
+
 test('owner: dashboard cards, action-needed, every screen renders', async ({ page }) => {
   await login(page, 'boateng');
   await expect(page).toHaveURL(/\/dashboard/);

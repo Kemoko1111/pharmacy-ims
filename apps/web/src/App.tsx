@@ -14,6 +14,7 @@ import Reports from './pages/Reports';
 import Customers from './pages/Customers';
 import Users from './pages/Users';
 import Settings from './pages/Settings';
+import AuditLog from './pages/AuditLog';
 
 function Protected({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, ready } = useAuth();
@@ -92,6 +93,14 @@ export default function App() {
           element={
             <Protected roles={['MANAGER', 'PHARMACIST']}>
               <Reports />
+            </Protected>
+          }
+        />
+        <Route
+          path="audit"
+          element={
+            <Protected roles={['MANAGER']}>
+              <AuditLog />
             </Protected>
           }
         />

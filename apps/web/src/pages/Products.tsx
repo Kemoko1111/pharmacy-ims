@@ -141,6 +141,40 @@ export default function Products() {
   );
 }
 
+function UnitRow({
+  productId,
+  unit,
+}: {
+  productId: string;
+  unit: { id: string; unitName: string; factorToBase: number; sellingPrice: string; isActive?: boolean };
+}) {
+  const queryClient = useQueryClient();
+  const retire = useMutation({
+    mutationFn: () => api(`/products/${productId}/units/${unit.id}/retire`, { method: 'POST' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products'] }),
+  });
+  const retired = unit.isActive === false || retire.isSuccess;
+
+  return (
+    <div className={`flex items-center justify-between py-1.5 text-sm ${retired ? 'opacity-50' : ''}`}>
+      <span>
+        {unit.unitName} = {unit.factorToBase} base @ {ghs(unit.sellingPrice)}
+        {retired && <span className="ml-2 rounded bg-ink-muted/15 px-1.5 text-xs">RETIRED</span>}
+      </span>
+      {!retired && (
+        <button
+          type="button"
+          onClick={() => confirm(`Retire "${unit.unitName}"? It disappears from the POS but stays on old receipts.`) && retire.mutate()}
+          disabled={retire.isPending}
+          className="text-warn hover:underline disabled:opacity-50"
+        >
+          Retire
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** US-16: QuickBooks item-list CSV upload with per-row error report. */
 function QbImportButton() {
   const queryClient = useQueryClient();
@@ -377,6 +411,15 @@ function ProductForm({ product, onClose }: { product: ProductRow | null; onClose
             <input required type="number" min="0" value={form.reorderLevel} onChange={(e) => set('reorderLevel', e.target.value)} className={input} />
           </div>
         </div>
+
+        {product && isManager && product.units.length > 0 && (
+          <div className="mt-4 rounded-lg border border-edge p-3">
+            <div className="text-sm font-semibold text-ink-muted">Pack units (retired, never edited — US-04)</div>
+            {product.units.map((u) => (
+              <UnitRow key={u.id} productId={product.id} unit={u} />
+            ))}
+          </div>
+        )}
 
         <div className="mt-3 flex gap-6">
           <label className="flex items-center gap-2 text-sm">

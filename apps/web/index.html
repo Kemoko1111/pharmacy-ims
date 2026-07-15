@@ -4,13 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0D9488" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>PharmaTrack</title>
-    <script>
-      // Apply theme before first paint to avoid flash (system pref + manual toggle)
-      const saved = localStorage.getItem('pt-theme');
-      const dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.classList.toggle('dark', dark);
-    </script>
+    <!-- pre-paint theme; external file keeps CSP free of unsafe-inline -->
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

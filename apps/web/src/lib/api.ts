@@ -36,10 +36,11 @@ const store = {
 
 export const tokenStore = store;
 
-let refreshing: Promise<boolean> | null = null;
+type RefreshOutcome = 'ok' | 'rejected' | 'network';
+let refreshing: Promise<RefreshOutcome> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
-  if (!store.refresh) return false;
+async function tryRefresh(): Promise<RefreshOutcome> {
+  if (!store.refresh) return 'rejected';
   refreshing ??= (async () => {
     try {
       const res = await fetch(`${BASE}/auth/refresh`, {
@@ -47,11 +48,11 @@ async function tryRefresh(): Promise<boolean> {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: store.refresh }),
       });
-      if (!res.ok) return false;
+      if (!res.ok) return 'rejected' as const; // server said no — session dead
       store.set(await res.json());
-      return true;
+      return 'ok' as const;
     } catch {
-      return false;
+      return 'network' as const; // outage — keep the shift session (ADR-006)
     } finally {
       refreshing = null;
     }
@@ -74,9 +75,13 @@ export async function api<T = unknown>(
   });
 
   if (res.status === 401 && retry && store.refresh) {
-    if (await tryRefresh()) return api(path, { method, body, retry: false });
-    store.clear();
-    window.dispatchEvent(new Event('pt-logout'));
+    const outcome = await tryRefresh();
+    if (outcome === 'ok') return api(path, { method, body, retry: false });
+    if (outcome === 'rejected') {
+      store.clear();
+      window.dispatchEvent(new Event('pt-logout'));
+    }
+    // 'network': fall through with the original 401 — don't end the shift
   }
 
   if (res.status === 204) return undefined as T;

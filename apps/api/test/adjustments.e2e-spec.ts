@@ -155,6 +155,8 @@ describe('Adjustments, quarantine, scheduled sweeps (US-12, BR-05)', () => {
     const jobs = app.get(JobsService);
     const result = await jobs.expirySweep();
     expect(result.expired).toBeGreaterThanOrEqual(1);
+    // the fixture's EARLY batch (60 days out) must trigger an early warning
+    expect(result.warned).toBeGreaterThanOrEqual(1);
 
     const batch = await prisma.batch.findUnique({ where: { id: dying } });
     expect(batch?.status).toBe('EXPIRED');
@@ -163,6 +165,15 @@ describe('Adjustments, quarantine, scheduled sweeps (US-12, BR-05)', () => {
       where: { type: 'EXPIRED', payload: { path: ['batchId'], equals: dying } },
     });
     expect(notif).not.toBeNull();
+
+    const warning = await prisma.notification.findFirst({
+      where: { type: 'EXPIRY_90', payload: { path: ['productId'], equals: fix.productId } },
+    });
+    expect(warning).not.toBeNull();
+
+    // re-running the sweep must not duplicate open warnings
+    const rerun = await jobs.expirySweep();
+    expect(rerun.warned).toBe(0);
   });
 
   it('low-stock scan notifies once per product (no spam on re-run)', async () => {

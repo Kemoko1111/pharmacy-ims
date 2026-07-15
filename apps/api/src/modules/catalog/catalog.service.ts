@@ -227,6 +227,30 @@ export class CatalogService {
     return unit;
   }
 
+  /** US-04 AC3: units are retired, never edited — history keeps the old unit. */
+  async retireUnit(productId: string, unitId: string, actor: RequestUser) {
+    const unit = await this.prisma.productUnit.findUnique({ where: { id: unitId } });
+    if (!unit || unit.productId !== productId) {
+      throw new NotFoundException({ code: 'NOT_FOUND', message: 'Unit not found on this product' });
+    }
+    if (!unit.isActive) {
+      throw new DomainException('ALREADY_RETIRED', 'Unit is already retired');
+    }
+    const updated = await this.prisma.productUnit.update({
+      where: { id: unitId },
+      data: { isActive: false },
+    });
+    await this.audit.log({
+      userId: actor.id,
+      action: 'product.retire_unit',
+      entity: 'product',
+      entityId: productId,
+      before: { unitName: unit.unitName, isActive: true },
+      after: { unitName: unit.unitName, isActive: false },
+    });
+    return updated;
+  }
+
   async addBarcode(productId: string, dto: AddBarcodeDto, actor: RequestUser) {
     await this.ensureProduct(productId);
     const barcode = await this.prisma.productBarcode.create({

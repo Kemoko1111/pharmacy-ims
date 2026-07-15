@@ -1,0 +1,36 @@
+# Nightly pg_dump (ADR-007 / NFR-07). No-op until the PROD_DATABASE_URL
+# secret exists (set it after the Railway deploy). Artifacts keep 30 days.
+name: DB backup
+
+on:
+  schedule:
+    - cron: '30 1 * * *' # 01:30 UTC nightly
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secret
+        id: check
+        run: |
+          if [ -n "${{ secrets.PROD_DATABASE_URL }}" ]; then
+            echo "have_url=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PROD_DATABASE_URL not set — skipping (expected before first deploy)"
+          fi
+
+      - name: Dump
+        if: steps.check.outputs.have_url == 'true'
+        run: |
+          docker run --rm postgres:16-alpine \
+            pg_dump --no-owner --format=custom "${{ secrets.PROD_DATABASE_URL }}" \
+            > pharmatrack-$(date +%F).dump
+
+      - name: Upload artifact
+        if: steps.check.outputs.have_url == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharmatrack-backup-${{ github.run_id }}
+          path: pharmatrack-*.dump
+          retention-days: 30

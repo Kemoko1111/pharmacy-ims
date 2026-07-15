@@ -24,6 +24,7 @@ interface CartState {
   remove: (key: string) => void;
   select: (key: string | null) => void;
   clear: () => void;
+  setLines: (lines: CartLine[]) => void; // recall from a held sale (F9)
 }
 
 export const useCart = create<CartState>((set) => ({
@@ -54,6 +55,7 @@ export const useCart = create<CartState>((set) => ({
     })),
   select: (key) => set({ selectedKey: key }),
   clear: () => set({ lines: [], selectedKey: null }),
+  setLines: (lines) => set({ lines, selectedKey: lines[0]?.key ?? null }),
 }));
 
 export function cartTotals(lines: CartLine[]) {

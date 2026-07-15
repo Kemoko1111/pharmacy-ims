@@ -133,6 +133,38 @@ describe('Catalog / products (US-03, US-04)', () => {
     expect(gone.status).toBe(404);
   });
 
+  it('units are retired, never edited (US-04 AC3): Manager-only, idempotence refused, POS hides them', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/products')
+      .set(inventory)
+      .send(productBody('Retirable', 'RET-CODE'));
+    const unitId = created.body.units[0].id;
+
+    const denied = await request(app.getHttpServer())
+      .post(`/api/v1/products/${created.body.id}/units/${unitId}/retire`)
+      .set(inventory);
+    expect(denied.status).toBe(403);
+
+    const retired = await request(app.getHttpServer())
+      .post(`/api/v1/products/${created.body.id}/units/${unitId}/retire`)
+      .set(manager);
+    expect(retired.status).toBe(201);
+    expect(retired.body.isActive).toBe(false);
+
+    const again = await request(app.getHttpServer())
+      .post(`/api/v1/products/${created.body.id}/units/${unitId}/retire`)
+      .set(manager);
+    expect(again.status).toBe(422);
+    expect(again.body.error.code).toBe('ALREADY_RETIRED');
+
+    // gone from the POS list view (active units only), kept on the detail view
+    const list = await request(app.getHttpServer())
+      .get('/api/v1/products?q=Retirable')
+      .set(cashier);
+    const row = list.body.data.find((p: { id: string }) => p.id === created.body.id);
+    expect(row.units).toHaveLength(0);
+  });
+
   it('barcode lookup resolves unit-level barcodes (US-06 AC1)', async () => {
     const created = await request(app.getHttpServer())
       .post('/api/v1/products')

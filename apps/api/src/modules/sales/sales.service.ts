@@ -109,6 +109,11 @@ export class SalesService {
         if (priceP < 0 || discountP < 0) {
           throw new DomainException('NEGATIVE_AMOUNT', 'Price/discount cannot be negative');
         }
+        // Discounts are role-gated (wireframes §Keyboard shortcuts, F8):
+        // cashiers ring full price; a Pharmacist/Manager applies reductions.
+        if (discountP > 0 && actor.role === 'CASHIER') {
+          throw new DomainException('DISCOUNT_FORBIDDEN', 'Discounts need a Pharmacist or Manager');
+        }
         const grossP = priceP * item.quantity;
         const lineTotalP = grossP - discountP;
         if (lineTotalP < 0) {

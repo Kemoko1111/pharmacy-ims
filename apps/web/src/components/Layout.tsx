@@ -15,6 +15,7 @@ const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/sales', label: 'Sales' },
   { to: '/customers', label: 'Customers', roles: ['PHARMACIST', 'MANAGER'] },
   { to: '/reports', label: 'Reports', roles: ['MANAGER', 'PHARMACIST'] },
+  { to: '/audit', label: 'Audit', roles: ['MANAGER'] },
   { to: '/users', label: 'Users', roles: [] }, // ADMIN only (implicit pass)
   { to: '/settings', label: 'Settings', roles: [] },
 ];

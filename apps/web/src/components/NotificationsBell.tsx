@@ -17,6 +17,8 @@ function describe(n: Notification): string {
       return `${p.productName}: ${p.qtyBase} left (reorder at ${p.reorderLevel})`;
     case 'EXPIRED':
       return `${p.productName} batch ${p.batchNumber} EXPIRED — ${p.qtyOnHand} units, ${ghs(String(p.valueAtCost))}`;
+    case 'EXPIRY_90':
+      return `${p.productName} batch ${p.batchNumber} expires ${p.expiryDate} — ${ghs(String(p.valueAtRisk))} at risk`;
     case 'NEG_STOCK_EXCEPTION':
       return `Offline oversell: ${p.productName} short by ${p.qtyShort} — reconcile stock`;
     default:
@@ -26,6 +28,7 @@ function describe(n: Notification): string {
 
 const TYPE_CLS: Record<string, string> = {
   LOW_STOCK: 'text-warn',
+  EXPIRY_90: 'text-warn',
   EXPIRED: 'text-danger',
   NEG_STOCK_EXCEPTION: 'text-danger',
 };
