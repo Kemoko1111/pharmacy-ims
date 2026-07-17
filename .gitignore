@@ -13,6 +13,7 @@ coverage/
 # local databases / dumps
 *.sqlite
 *.dump
+apps/api/.pgdata/
 
 # OS / editor
 .DS_Store
