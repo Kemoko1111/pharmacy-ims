@@ -155,26 +155,27 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
 
         {!user && (
           <>
-            <label className={label}>Username *</label>
-            <input required value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} className={input} />
+            <label className={label} htmlFor="user-username">Username *</label>
+            <input id="user-username" required value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} className={input} />
           </>
         )}
 
-        <label className={label}>Full name *</label>
-        <input required value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} className={input} />
+        <label className={label} htmlFor="user-fullname">Full name *</label>
+        <input id="user-fullname" required value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} className={input} />
 
-        <label className={label}>Phone</label>
-        <input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={input} />
+        <label className={label} htmlFor="user-phone">Phone</label>
+        <input id="user-phone" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={input} />
 
-        <label className={label}>Role *</label>
-        <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as UserRole }))} className={input}>
+        <label className={label} htmlFor="user-role">Role *</label>
+        <select id="user-role" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as UserRole }))} className={input}>
           {USER_ROLES.map((r) => (
             <option key={r} value={r}>{r}</option>
           ))}
         </select>
 
-        <label className={label}>{user ? 'New password (for reset)' : 'Password *'}</label>
+        <label className={label} htmlFor="user-password">{user ? 'New password (for reset)' : 'Password *'}</label>
         <input
+          id="user-password"
           required={!user}
           type="password"
           value={form.password}

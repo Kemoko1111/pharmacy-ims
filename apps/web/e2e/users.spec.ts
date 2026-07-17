@@ -18,11 +18,6 @@ async function login(page: Page, username: string) {
   await expect(page.getByText('● ONLINE').or(page.getByText(/OFFLINE/))).toBeVisible({ timeout: 10_000 });
 }
 
-// UserForm pairs <label> with its <input>/<select> as plain DOM siblings,
-// with no htmlFor/id — getByLabel() can't resolve them.
-const fieldByLabel = (page: Page, labelText: string) => page.locator(`label:has-text("${labelText}") + input`);
-const selectByLabel = (page: Page, labelText: string) => page.locator(`label:has-text("${labelText}") + select`);
-
 test('admin: create a user, change their role, then disable them', async ({ page }) => {
   const stamp = Date.now();
   const username = `pw-test-${stamp}`;
@@ -35,9 +30,9 @@ test('admin: create a user, change their role, then disable them', async ({ page
   // ── create ──────────────────────────────────────────────────────────────
   await page.getByRole('button', { name: /new user/i }).click();
   await expect(page.getByRole('heading', { name: 'New user' })).toBeVisible();
-  await fieldByLabel(page, 'Username').fill(username);
-  await fieldByLabel(page, 'Full name').fill(fullName);
-  await fieldByLabel(page, 'Password').fill('TestPass123');
+  await page.getByLabel('Username *').fill(username);
+  await page.getByLabel('Full name *').fill(fullName);
+  await page.getByLabel('Password *').fill('TestPass123');
   await page.getByRole('button', { name: /^Save$/ }).click();
 
   await expect(page.getByRole('heading', { name: 'New user' })).not.toBeVisible();
@@ -50,7 +45,7 @@ test('admin: create a user, change their role, then disable them', async ({ page
   // ── edit role ───────────────────────────────────────────────────────────
   await row().getByRole('button', { name: 'Edit' }).click();
   await expect(page.getByRole('heading', { name: `Edit @${username}` })).toBeVisible();
-  await selectByLabel(page, 'Role').selectOption('MANAGER');
+  await page.getByLabel('Role *').selectOption('MANAGER');
   await page.getByRole('button', { name: /^Save$/ }).click();
 
   await expect(page.getByRole('heading', { name: `Edit @${username}` })).not.toBeVisible();

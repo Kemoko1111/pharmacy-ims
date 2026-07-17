@@ -17,30 +17,25 @@ async function login(page: Page, username: string) {
   await expect(page.getByText('● ONLINE').or(page.getByText(/OFFLINE/))).toBeVisible({ timeout: 10_000 });
 }
 
-// Settings.tsx pairs <label> with its <input> as plain DOM siblings, with no
-// htmlFor/id — getByLabel() can't resolve them, so locate via the adjacent
-// sibling instead (Settings.tsx / UserForm below both have this gap).
-const fieldByLabel = (page: Page, labelText: string) => page.locator(`label:has-text("${labelText}") + input`);
-
 test('admin: VAT rate change persists across a reload', async ({ page }) => {
   await login(page, 'admin');
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: /Settings/ })).toBeVisible();
 
-  const vatRate = fieldByLabel(page, 'VAT rate');
+  const vatRate = page.getByLabel('VAT rate (0–1)');
   await vatRate.fill('0.15');
   await page.getByRole('button', { name: /save settings/i }).click();
   await expect(page.getByText('Saved ✓')).toBeVisible();
 
   await page.reload();
-  await expect(fieldByLabel(page, 'VAT rate')).toHaveValue('0.15');
+  await expect(page.getByLabel('VAT rate (0–1)')).toHaveValue('0.15');
 });
 
 test('admin: an out-of-range VAT rate is rejected with a visible error', async ({ page }) => {
   await login(page, 'admin');
   await page.goto('/settings');
 
-  await fieldByLabel(page, 'VAT rate').fill('1.5'); // valid range is 0–1 (settings.service.ts KNOWN_KEYS)
+  await page.getByLabel('VAT rate (0–1)').fill('1.5'); // valid range is 0–1 (settings.service.ts KNOWN_KEYS)
   await page.getByRole('button', { name: /save settings/i }).click();
 
   await expect(page.getByText('Invalid value for "vat_rate"')).toBeVisible();

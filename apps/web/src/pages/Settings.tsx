@@ -77,30 +77,30 @@ function SettingsForm({ initial }: { initial: SettingsShape }) {
       <form onSubmit={submit} className="mt-4 rounded-xl border border-edge bg-surface p-5">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={label}>VAT rate (0–1)</label>
-            <input type="number" step="0.01" min="0" max="1" value={form.vat_rate} onChange={set('vat_rate')} className={input} />
+            <label className={label} htmlFor="vat-rate">VAT rate (0–1)</label>
+            <input id="vat-rate" type="number" step="0.01" min="0" max="1" value={form.vat_rate} onChange={set('vat_rate')} className={input} />
           </div>
           <div>
-            <label className={label}>Expiry warning (days)</label>
-            <input type="number" min="1" max="365" value={form.expiry_warn_days} onChange={set('expiry_warn_days')} className={input} />
+            <label className={label} htmlFor="expiry-warn-days">Expiry warning (days)</label>
+            <input id="expiry-warn-days" type="number" min="1" max="365" value={form.expiry_warn_days} onChange={set('expiry_warn_days')} className={input} />
           </div>
         </div>
 
-        <label className={label}>Adjustment auto-approve threshold (GHS at cost)</label>
-        <input type="number" step="0.01" min="0" value={form.adjust_approval_threshold} onChange={set('adjust_approval_threshold')} className={input} />
+        <label className={label} htmlFor="adjust-approval-threshold">Adjustment auto-approve threshold (GHS at cost)</label>
+        <input id="adjust-approval-threshold" type="number" step="0.01" min="0" value={form.adjust_approval_threshold} onChange={set('adjust_approval_threshold')} className={input} />
         <p className="mt-1 text-xs text-ink-muted">Adjustments above this value wait for Manager approval (BR-05).</p>
 
-        <label className={label}>SMS alert phone (Africa's Talking)</label>
-        <input value={form.alert_phone} onChange={set('alert_phone')} placeholder="+233 20 000 0000" className={input} />
+        <label className={label} htmlFor="alert-phone">SMS alert phone (Africa's Talking)</label>
+        <input id="alert-phone" value={form.alert_phone} onChange={set('alert_phone')} placeholder="+233 20 000 0000" className={input} />
 
         <div className="mt-4 rounded-lg border border-edge p-3">
           <div className="text-sm font-semibold text-ink-muted">Receipt header (80 mm print)</div>
-          <label className={label}>Line 1</label>
-          <input value={form.line1} onChange={set('line1')} className={input} />
-          <label className={label}>Line 2</label>
-          <input value={form.line2} onChange={set('line2')} className={input} />
-          <label className={label}>Line 3</label>
-          <input value={form.line3} onChange={set('line3')} className={input} />
+          <label className={label} htmlFor="receipt-line1">Line 1</label>
+          <input id="receipt-line1" value={form.line1} onChange={set('line1')} className={input} />
+          <label className={label} htmlFor="receipt-line2">Line 2</label>
+          <input id="receipt-line2" value={form.line2} onChange={set('line2')} className={input} />
+          <label className={label} htmlFor="receipt-line3">Line 3</label>
+          <input id="receipt-line3" value={form.line3} onChange={set('line3')} className={input} />
         </div>
 
         {error && <p className="mt-3 rounded bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
