@@ -1,1 +1,0 @@
-/Users/kem/development/pharmacy-ims/node_modules/.pnpm/@embedded-postgres+darwin-x64@16.14.0-beta.17/node_modules/@embedded-postgres/darwin-x64/native/bin/postgres "-D" "/Users/kem/development/pharmacy-ims/apps/api/.pgdata" "-p" "5432"
