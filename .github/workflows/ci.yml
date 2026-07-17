@@ -54,6 +54,9 @@ jobs:
       - name: API build
         run: pnpm --filter @pharmatrack/api build
 
+      - name: API unit tests
+        run: pnpm --filter @pharmatrack/api test:unit
+
       - name: API e2e tests
         run: pnpm --filter @pharmatrack/api test
         env:
