@@ -1,6 +1,6 @@
 # Database Design — ERD & Data Dictionary Notes
 
-**COE 454 — Week 3 Deliverable 2 (ERD, min 4 entities — this design has 20)**
+**COE 454 — Week 3 Deliverable 2 (ERD, min 4 entities — this design has 24)**
 **Owner:** Backend Lead · DDL in [schema.sql](schema.sql)
 
 ## Design rules applied everywhere

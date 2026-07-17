@@ -37,7 +37,7 @@ the point of sale.
 | Course deliverable | Document |
 |---|---|
 | Architecture Decision Records (min 5) | [docs/week3/adrs.md](docs/week3/adrs.md) — 8 ADRs |
-| ERD (min 4 entities) | [docs/week3/database-design.md](docs/week3/database-design.md) — 15 entities |
+| ERD (min 4 entities) | [docs/week3/database-design.md](docs/week3/database-design.md) — 24 entities |
 | Database schema (DDL) | [docs/week3/schema.sql](docs/week3/schema.sql) |
 | API Schema document | [docs/week3/api-schema.md](docs/week3/api-schema.md) |
 | Project board screenshot | Take after loading user stories US-01…US-16 as issues |
