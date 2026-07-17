@@ -71,6 +71,25 @@ describe('Auth (US-01)', () => {
     expect(familyDead.status).toBe(401);
   });
 
+  it('logs out with no bearer token and actually revokes the refresh token', async () => {
+    // The frontend clears its local access token before calling /auth/logout
+    // (auth.tsx), so this request always arrives with no Authorization header.
+    // /auth/logout must not require one — it authenticates via the refresh
+    // token in the body, same as /auth/refresh.
+    const session = await login(app, 'akosua');
+    const refreshToken = session.body.refreshToken;
+
+    const logout = await request(app.getHttpServer())
+      .post('/api/v1/auth/logout')
+      .send({ refreshToken });
+    expect(logout.status).toBe(204);
+
+    const attempt = await request(app.getHttpServer())
+      .post('/api/v1/auth/refresh')
+      .send({ refreshToken });
+    expect(attempt.status).toBe(401);
+  });
+
   it('guards protected routes: no token → 401, valid token → 200 /auth/me', async () => {
     const anon = await request(app.getHttpServer()).get('/api/v1/auth/me');
     expect(anon.status).toBe(401);
