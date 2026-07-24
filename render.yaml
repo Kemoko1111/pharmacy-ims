@@ -5,6 +5,7 @@ services:
     name: pharmatrack-api
     runtime: docker
     plan: free
+    region: virginia # colocated with the Neon DB (aws-us-east-1)
     dockerfilePath: apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /health
