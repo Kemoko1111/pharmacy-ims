@@ -110,12 +110,21 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (user) {
-        return api(`/users/${user.id}`, {
+        await api(`/users/${user.id}`, {
           method: 'PATCH',
           body: { fullName: form.fullName, phone: form.phone || undefined, role: form.role },
         });
+        // A password is optional on edit; when provided, apply it (also clears
+        // any lockout and signs the user out everywhere).
+        if (form.password) {
+          await api(`/users/${user.id}/reset-password`, {
+            method: 'POST',
+            body: { newPassword: form.password },
+          });
+        }
+        return;
       }
       return api('/users', {
         method: 'POST',
@@ -130,13 +139,6 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
     },
     onSuccess: onDone,
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Save failed'),
-  });
-
-  const resetPassword = useMutation({
-    mutationFn: () =>
-      api(`/users/${user!.id}/reset-password`, { method: 'POST', body: { newPassword: form.password } }),
-    onSuccess: onDone,
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Reset failed'),
   });
 
   const submit = (e: FormEvent) => {
@@ -173,7 +175,7 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
           ))}
         </select>
 
-        <label className={label} htmlFor="user-password">{user ? 'New password (for reset)' : 'Password *'}</label>
+        <label className={label} htmlFor="user-password">{user ? 'New password' : 'Password *'}</label>
         <input
           id="user-password"
           required={!user}
@@ -184,14 +186,9 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
           className={input}
         />
         {user && (
-          <button
-            type="button"
-            disabled={!form.password || resetPassword.isPending}
-            onClick={() => resetPassword.mutate()}
-            className="mt-2 text-sm font-semibold text-warn disabled:opacity-50"
-          >
-            {resetPassword.isPending ? 'Resetting…' : 'Reset password & sign out everywhere'}
-          </button>
+          <p className="mt-1 text-xs text-ink-muted">
+            Leave blank to keep the current password. Setting a new one signs this user out everywhere.
+          </p>
         )}
 
         {error && <p className="mt-3 rounded bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
