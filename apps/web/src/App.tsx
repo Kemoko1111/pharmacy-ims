@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './lib/auth';
+import { PwaUpdater } from './lib/pwaUpdate';
 import { Layout } from './components/Layout';
 import Login from './pages/Login';
 import Pos from './pages/Pos';
@@ -33,7 +34,9 @@ export default function App() {
   const home = user?.role === 'CASHIER' ? '/pos' : '/dashboard';
 
   return (
-    <Routes>
+    <>
+      <PwaUpdater />
+      <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/receipt" element={<Protected><Receipt /></Protected>} />
       <Route
@@ -122,6 +125,7 @@ export default function App() {
         />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }

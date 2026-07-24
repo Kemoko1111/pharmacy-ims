@@ -8,7 +8,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'prompt', // ADR-002: "update available" toast, no silent swap
+      registerType: 'prompt', // ADR-002: no silent swap — app applies updates only at safe moments
+      injectRegister: null, // we register manually in src/lib/pwaUpdate.tsx
       manifest: {
         id: '/',
         name: 'PharmaTrack',
