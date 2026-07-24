@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useOnline } from '../lib/useOnline';
 import { refreshSnapshot } from '../lib/offline';
+import { useClickAway } from '../lib/useClickAway';
 import { NotificationsBell } from './NotificationsBell';
 
 const NAV: { to: string; label: string; roles?: string[] }[] = [
@@ -36,6 +37,8 @@ export function Layout() {
   const { online, unsynced } = useOnline();
   const { dark, toggle } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  useClickAway(headerRef, menuOpen, useCallback(() => setMenuOpen(false), []));
 
   // Catalogue snapshot for offline POS: on mount + every 15 min (ADR-006)
   useEffect(() => {
@@ -53,7 +56,7 @@ export function Layout() {
   return (
     <div className="flex h-full flex-col">
       {/* Status always visible (wireframes §Design principles #3) */}
-      <header className="border-b border-edge bg-surface">
+      <header ref={headerRef} className="border-b border-edge bg-surface">
         <div className="flex items-center gap-3 px-4 py-2">
           <Link to="/" className="text-lg font-bold text-primary hover:opacity-80">
             PharmaTrack

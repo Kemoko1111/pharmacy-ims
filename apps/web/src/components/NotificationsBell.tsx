@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useClickAway } from '../lib/useClickAway';
 import { ghs, shortDate } from '../lib/format';
 
 interface Notification {
@@ -35,6 +36,8 @@ const TYPE_CLS: Record<string, string> = {
 
 export function NotificationsBell() {
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useClickAway(wrapRef, open, useCallback(() => setOpen(false), []));
   const queryClient = useQueryClient();
 
   const { data } = useQuery({
@@ -51,7 +54,7 @@ export function NotificationsBell() {
   const count = data?.meta.total ?? 0;
 
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapRef}>
       <button
         onClick={() => setOpen((o) => !o)}
         className="relative rounded px-2 py-1 text-lg"
