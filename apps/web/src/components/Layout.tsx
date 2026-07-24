@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useOnline } from '../lib/useOnline';
 import { refreshSnapshot } from '../lib/offline';
@@ -53,7 +53,9 @@ export function Layout() {
     <div className="flex h-full flex-col">
       {/* Status always visible (wireframes §Design principles #3) */}
       <header className="flex items-center gap-3 border-b border-edge bg-surface px-4 py-2">
-        <span className="text-lg font-bold text-primary">PharmaTrack</span>
+        <Link to="/" className="text-lg font-bold text-primary hover:opacity-80">
+          PharmaTrack
+        </Link>
 
         <span
           className={`rounded-full px-2 py-0.5 text-sm font-medium ${
