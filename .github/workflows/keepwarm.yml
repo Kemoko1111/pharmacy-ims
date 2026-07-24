@@ -1,0 +1,21 @@
+# Keeps the free Render instance from cold-sleeping during waking hours (ADR-009).
+# No-op until the RENDER_API_URL repository variable is set (e.g.
+# https://pharmatrack-api.onrender.com). Cold starts outside these hours are
+# masked by the offline-first POS anyway.
+name: keep-warm
+on:
+  schedule:
+    - cron: "*/10 6-22 * * *" # every 10 min, 06:00-22:59 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          if [ -n "${{ vars.RENDER_API_URL }}" ]; then
+            curl -fsS --max-time 60 "${{ vars.RENDER_API_URL }}/health" && echo "warm"
+          else
+            echo "RENDER_API_URL variable not set — skipping (expected before first deploy)"
+          fi

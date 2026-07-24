@@ -249,20 +249,20 @@ flowchart TB
         PWA --> PRN
     end
 
-    subgraph railway["Railway"]
+    subgraph render["Render"]
         subgraph api["NestJS modular monolith"]
             AUTH[auth] ; CAT[catalog] ; INVM[inventory] ; PUR[purchasing]
             SAL["sales + sync"] ; REP[reporting] ; NOT[notifications] ; AUD[audit]
         end
-        PG[("PostgreSQL 16")]
-        api --> PG
     end
+    PG[("Neon<br/>PostgreSQL 16")]
+    api --> PG
 
     VER["Vercel<br/>static hosting + CDN"] --> PWA
     PWA <-->|"HTTPS JSON /api/v1"| api
     NOT --> AT["Africa's Talking SMS"]
     PG -.nightly pg_dump.-> BK[("Off-site backup")]
-    GH["GitHub Actions CI/CD"] -.deploys.-> VER & railway
+    GH["GitHub Actions CI/CD"] -.deploys.-> VER & render
 ```
 
 *Module diagram: see the dependency table in ADR-001; arrows inside `api` are enforced

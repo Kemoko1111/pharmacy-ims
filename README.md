@@ -36,7 +36,7 @@ the point of sale.
 ### Week 3 — Architecture & Planning
 | Course deliverable | Document |
 |---|---|
-| Architecture Decision Records (min 5) | [docs/week3/adrs.md](docs/week3/adrs.md) — 8 ADRs |
+| Architecture Decision Records (min 5) | [docs/week3/adrs.md](docs/week3/adrs.md) — 9 ADRs |
 | ERD (min 4 entities) | [docs/week3/database-design.md](docs/week3/database-design.md) — 24 entities |
 | Database schema (DDL) | [docs/week3/schema.sql](docs/week3/schema.sql) |
 | API Schema document | [docs/week3/api-schema.md](docs/week3/api-schema.md) |
@@ -82,7 +82,7 @@ POS — accessible from the till, a phone, or the owner's laptop.
 | Backend | Node.js 22 + NestJS (modular monolith), class-validator DTOs |
 | ORM / DB | Prisma + PostgreSQL 16 |
 | Auth | JWT (short-lived access + rotating refresh), RBAC, argon2 password hashing |
-| Deployment | Vercel (frontend) + Railway (API + Postgres) |
+| Deployment | Vercel (frontend) + Render (API) + Neon (Postgres) |
 | Barcode | USB scanner as keyboard wedge; `@zxing/browser` camera scanning on mobile |
 | Receipts | 80 mm thermal print via browser print CSS; SMS receipt/alerts via Africa's Talking (Week 5 integration) |
 
@@ -138,16 +138,18 @@ pnpm --filter @pharmatrack/api test
 With the stack running: `pnpm --filter @pharmatrack/web test:ui` — drives the full demo
 arc headless (login → sale → offline queue → reconnect sync → dashboard → admin).
 
-### Deploying (ADR-007)
+### Deploying (ADR-009)
 
-- **API + DB → Railway:** create a project with a Postgres plugin, point it at this repo;
-  `apps/api/railway.json` selects the Dockerfile build and `/health` checks. Set env:
-  `DATABASE_URL` (from the plugin), `JWT_ACCESS_SECRET` (openssl rand -hex 32),
-  `CORS_ORIGIN` (the Vercel URL), optionally `AT_USERNAME`/`AT_API_KEY` for real SMS.
-  Migrations run automatically on boot.
+- **DB → Neon:** create a free Postgres project; copy the pooled connection string
+  (`...sslmode=require`).
+- **API → Render:** "New → Blueprint" pointed at this repo; `render.yaml` selects the
+  Dockerfile build, `/health` checks, and generates `JWT_ACCESS_SECRET`. Paste
+  `DATABASE_URL` (Neon) and `CORS_ORIGIN` (the Vercel URL) when prompted; optionally add
+  `AT_USERNAME`/`AT_API_KEY` for real SMS. Migrations run automatically on boot. Set the
+  `RENDER_API_URL` repo variable so `keepwarm.yml` pings it.
 - **Web → Vercel:** import the repo, set the project root to `apps/web`
   (`vercel.json` handles the monorepo build + SPA rewrites). Set `VITE_API_URL` to
-  `https://<railway-app>/api/v1`.
+  `https://<render-app>.onrender.com/api/v1`.
 - **Load test (Week 7):** `k6 run scripts/load/k6-pos.js -e BASE=<api-url>` — thresholds
   encode the <300 ms p95 search target. OWASP checklist: `docs/week7/owasp-checklist.md`.
 

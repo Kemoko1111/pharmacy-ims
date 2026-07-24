@@ -179,7 +179,7 @@ until reconnect (accepted; price changes are Manager actions done online).
 
 ## ADR-007: Deployment — Vercel (web) + Railway (API + PostgreSQL)
 
-**Status:** Accepted
+**Status:** Superseded by ADR-009
 
 **Context.** Course Week 5 requires a public URL for frontend and backend on free-ish
 tiers, and Week 8 adds CI/CD. Options per brief: Vercel, Railway, Render. Render free
@@ -221,3 +221,30 @@ printing testable by "print to PDF". *Harder:* browser print dialog adds one key
 unless kiosk-mode silent printing is configured on the till (we will configure it at
 handover); exotic printers may need margins tuned — verify the printer model at Visit 2
 (Open Question 5).
+
+## ADR-009: Deployment revision — Render (API) + Neon (PostgreSQL) replace Railway
+
+**Status:** Accepted (supersedes ADR-007's backend/database choice; the Vercel frontend
+decision stands)
+
+**Context.** ADR-007 chose Railway to avoid Render's free-tier cold sleeps. Re-examined
+before the Week 5 deploy: Railway has no permanent free tier — its one-time ~USD 5 trial
+credit exhausts mid-semester and the API then silently stops, a worse failure mode for a
+course project than a planned-for cold start. Two facts have also changed the weight of
+the original objection: (1) the offline-first POS (ADR-006) masks API cold starts at the
+till — the catalogue is cached and sales queue locally, so the star feature doubles as
+the mitigation; (2) the team has prior production experience running the
+Render + Neon + Vercel stack.
+
+**Decision.** API: Render free web service built from `apps/api/Dockerfile`
+(`render.yaml` blueprint; `/health` checks; migrations still run on boot). Database:
+Neon free-tier PostgreSQL (Render's own free Postgres expires after 30 days). A GitHub
+Actions keep-warm ping (`keepwarm.yml`, every 10 min during waking hours) plus a
+pre-demo warm-up minimizes cold starts; nightly `pg_dump` (`backup.yml`) is unchanged —
+it only needs the `PROD_DATABASE_URL` secret pointed at Neon.
+
+**Consequences.** *Easier:* GHS 0 hosting for the whole semester with no expiring
+credit; a stack the team has operated before; Neon branching gives free point-in-time
+restore on top of NFR-07 dumps. *Harder:* worst-case ~50 s cold start if the ping lapses
+(demo script: open the app two minutes early); CSP `connect-src` and `CORS_ORIGIN` must
+be re-pointed at the `onrender.com` URL, tracked in the OWASP checklist.

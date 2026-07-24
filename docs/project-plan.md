@@ -85,7 +85,7 @@ lists; the QB item list has been imported or a dated plan for it is agreed with 
 | R3 | Offline sync bugs corrupt stock | M | H | ADR-006 design (append-only, idempotent); sync endpoint has the densest test coverage; negative-stock exceptions surfaced, never hidden |
 | R4 | QB CSV export impossible/dirty | M | M | Verify export at Visit 2 (Open Q9); fallback = top-200 products entered manually during training week |
 | R5 | Only 1–2 members can actually code | M | H | Exemplar module pattern (ADR-003); pairing rota; non-coders own tests-as-specs, data entry, docs |
-| R6 | Free-tier hosting sleeps/expires mid-demo | M | M | Railway (no cold sleep) per ADR-007; screen-recording backup mandated by brief §4.5.2; uptime ping |
+| R6 | Free-tier hosting sleeps/expires mid-demo | M | M | Render+Neon per ADR-009 (no expiring credit); keep-warm ping + pre-demo warm-up; offline-first POS masks cold starts; screen-recording backup mandated by brief §4.5.2 |
 | R7 | Receipt printer incompatible with browser print | L | M | Print-to-PDF fallback proves the flow; kiosk silent-print flag; ESC/POS spike only if needed (ADR-008) |
 | R8 | Team member non-delivery 2+ weeks | M | M | Charter §5 escalation; PM notifies lecturer in writing (required); peer-eval transparency |
 | R9 | Client data mishandled (Act 843 / MoU §4) | L | H | Seed/demo data only in repos and AI tools; real data only in prod DB; deletion at semester end |

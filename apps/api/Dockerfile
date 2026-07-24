@@ -23,5 +23,5 @@ COPY --from=build /app /app
 COPY --from=build /repo/apps/api/dist /app/dist
 
 EXPOSE 3000
-# migrations run on boot so Railway deploys stay zero-touch
+# migrations run on boot so deploys stay zero-touch (ADR-009)
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]

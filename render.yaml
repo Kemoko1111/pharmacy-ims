@@ -1,0 +1,23 @@
+# Render Blueprint (ADR-009). Database is Neon Postgres (free tier), created
+# separately — paste its connection string into DATABASE_URL when prompted.
+services:
+  - type: web
+    name: pharmatrack-api
+    runtime: docker
+    plan: free
+    dockerfilePath: apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: API_PORT
+        value: "10000"
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL_HOURS
+        value: "12"
+      - key: DATABASE_URL
+        sync: false # Neon connection string (postgresql://...sslmode=require)
+      - key: CORS_ORIGIN
+        sync: false # the Vercel URL once the web app is deployed

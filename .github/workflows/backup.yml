@@ -1,5 +1,5 @@
 # Nightly pg_dump (ADR-007 / NFR-07). No-op until the PROD_DATABASE_URL
-# secret exists (set it after the Railway deploy). Artifacts keep 30 days.
+# secret exists (set it to the Neon URL after the Render deploy). Artifacts keep 30 days.
 name: DB backup
 
 on:

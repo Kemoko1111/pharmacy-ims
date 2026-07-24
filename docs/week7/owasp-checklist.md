@@ -6,7 +6,7 @@ Every ✅ names the code that enforces it, so the panel can verify claims.
 | # | Risk | Status | Where / how |
 |---|---|---|---|
 | A01 | Broken Access Control | ✅ | Single server-side `RolesGuard` matrix (`common/roles.guard.ts`); UI only hides what the server refuses. Cashier sales scoped to own+today in `SalesService.assertCanView`. Customers module P/M-only. Over-receipt and price changes role-gated in services, not just routes. e2e tests assert 403s. |
-| A02 | Cryptographic Failures | ✅ | Argon2id password hashing (`@node-rs/argon2` defaults); refresh tokens stored as SHA-256 hashes; HTTPS enforced by Vercel/Railway platforms; no card data stored (cash/MoMo reference only). |
+| A02 | Cryptographic Failures | ✅ | Argon2id password hashing (`@node-rs/argon2` defaults); refresh tokens stored as SHA-256 hashes; HTTPS enforced by Vercel/Render platforms; no card data stored (cash/MoMo reference only). |
 | A03 | Injection | ✅ | Prisma parameterized queries throughout; the few raw queries use tagged templates (`$queryRaw`) which bind parameters; `class-validator` DTOs with `forbidNonWhitelisted` reject unknown fields; CSV import parses with `csv-parse`, never string-splices SQL. |
 | A04 | Insecure Design | ✅ | Money as integer pesewas (no float drift); stock mutations behind `FOR UPDATE` row locks in one transaction; append-only movement ledger; idempotent `clientSaleId` makes retries safe by design (ADR-006). |
 | A05 | Security Misconfiguration | ✅ | `helmet()` security headers on the API; CORS restricted to the web origin via env; secrets only in platform env vars (`.env` gitignored); strict CSP + nosniff/referrer/permissions headers on the web app (`vercel.json`) — the theme bootstrap was externalized so `script-src 'self'` holds with no unsafe-inline. |
@@ -34,6 +34,6 @@ Every ✅ names the code that enforces it, so the panel can verify claims.
 - [x] `pnpm audit` job in CI
 - [x] Nightly `pg_dump` workflow (activates once `PROD_DATABASE_URL` secret is set)
 - [ ] Rotate the demo credentials; disable the seeded `admin` account in prod
-- [ ] Adjust CSP `connect-src` to the final API domain after the Railway deploy
-- [ ] Verify Railway Postgres is not publicly reachable (private networking)
+- [ ] Tighten CSP `connect-src` from `*.onrender.com` to the exact API domain after the Render deploy
+- [ ] Verify the Neon connection uses `sslmode=require` and credentials live only in Render env vars
 - [ ] Run this checklist against the live URLs, screenshot evidence for the report

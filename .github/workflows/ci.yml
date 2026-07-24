@@ -1,5 +1,5 @@
 # Lint + test on every PR (project-plan.md §6); formalized as the Week 8
-# CI/CD deliverable. Deploys to Railway/Vercel hang off main once accounts exist.
+# CI/CD deliverable. Deploys to Render/Vercel hang off main once accounts exist.
 name: CI
 
 on:
