@@ -247,9 +247,9 @@ export default function Pos() {
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex min-h-full flex-col lg:h-full lg:flex-row">
       {/* ── Left: search + results ─────────────────────────────────────────── */}
-      <section className="flex min-w-0 flex-1 flex-col border-r border-edge p-4">
+      <section className="flex min-w-0 flex-1 flex-col border-b border-edge p-4 lg:border-b-0 lg:border-r">
         <input
           ref={searchRef}
           autoFocus
@@ -270,7 +270,7 @@ export default function Pos() {
           </div>
         )}
 
-        <div className="mt-3 min-h-0 flex-1 overflow-auto">
+        <div className="mt-3 min-h-0 flex-1 overflow-auto max-lg:flex-none max-lg:overflow-visible">
           {results.map((p, i) => {
             const low = p.qtyOnHand <= (('reorderLevel' in p ? (p as { reorderLevel?: number }).reorderLevel : 0) ?? 0);
             const out = p.qtyOnHand <= 0;
@@ -330,7 +330,7 @@ export default function Pos() {
       </section>
 
       {/* ── Right: the sale ───────────────────────────────────────────────── */}
-      <section className="flex w-[26rem] shrink-0 flex-col bg-surface">
+      <section className="flex w-full shrink-0 flex-col bg-surface lg:w-[26rem]">
         <div className="flex items-center border-b border-edge px-4 py-3 font-semibold">
           SALE <span className="ml-1 text-ink-muted">(new)</span>
           {heldCount > 0 && (
@@ -344,7 +344,7 @@ export default function Pos() {
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
+        <div className="min-h-0 flex-1 overflow-auto px-2 py-2 max-lg:flex-none max-lg:overflow-visible">
           {cart.lines.length === 0 && (
             <p className="p-4 text-center text-ink-muted">Scan an item or search to begin</p>
           )}

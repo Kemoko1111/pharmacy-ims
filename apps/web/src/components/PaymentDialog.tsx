@@ -73,7 +73,7 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
   }, [method, tendered, busy]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" onClick={onClose}>
       <div
         className="w-full max-w-sm rounded-xl border border-edge bg-surface p-6"
         onClick={(e) => e.stopPropagation()}

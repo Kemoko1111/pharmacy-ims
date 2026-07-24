@@ -35,6 +35,7 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { online, unsynced } = useOnline();
   const { dark, toggle } = useTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Catalogue snapshot for offline POS: on mount + every 15 min (ADR-006)
   useEffect(() => {
@@ -52,60 +53,107 @@ export function Layout() {
   return (
     <div className="flex h-full flex-col">
       {/* Status always visible (wireframes §Design principles #3) */}
-      <header className="flex items-center gap-3 border-b border-edge bg-surface px-4 py-2">
-        <Link to="/" className="text-lg font-bold text-primary hover:opacity-80">
-          PharmaTrack
-        </Link>
+      <header className="border-b border-edge bg-surface">
+        <div className="flex items-center gap-3 px-4 py-2">
+          <Link to="/" className="text-lg font-bold text-primary hover:opacity-80">
+            PharmaTrack
+          </Link>
 
-        <span
-          className={`rounded-full px-2 py-0.5 text-sm font-medium ${
-            online ? 'bg-ok/15 text-ok' : 'bg-warn/20 text-warn'
-          }`}
-        >
-          {online ? '● ONLINE' : '● OFFLINE — sales are saved locally'}
-        </span>
-
-        {unsynced > 0 && (
-          <span className="rounded-full bg-warn/20 px-2 py-0.5 text-sm font-semibold text-warn">
-            ⇅ {unsynced} unsynced
+          <span
+            className={`rounded-full px-2 py-0.5 text-sm font-medium ${
+              online ? 'bg-ok/15 text-ok' : 'bg-warn/20 text-warn'
+            }`}
+          >
+            {online ? '● ONLINE' : '● OFFLINE'}
+            <span className="hidden sm:inline">
+              {online ? '' : ' — sales are saved locally'}
+            </span>
           </span>
-        )}
 
-        <nav className="ml-6 flex gap-1">
-          {visibleNav.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              className={({ isActive }) =>
-                `rounded px-3 py-1.5 text-sm font-medium ${
-                  isActive ? 'bg-primary/15 text-primary' : 'text-ink-muted hover:text-ink'
-                }`
-              }
+          {unsynced > 0 && (
+            <span className="rounded-full bg-warn/20 px-2 py-0.5 text-sm font-semibold text-warn">
+              ⇅ {unsynced} unsynced
+            </span>
+          )}
+
+          {/* Desktop nav (inline) */}
+          <nav className="ml-6 hidden gap-1 lg:flex">
+            {visibleNav.map((n) => (
+              <NavLink
+                key={n.to}
+                to={n.to}
+                className={({ isActive }) =>
+                  `rounded px-3 py-1.5 text-sm font-medium ${
+                    isActive ? 'bg-primary/15 text-primary' : 'text-ink-muted hover:text-ink'
+                  }`
+                }
+              >
+                {n.label}
+              </NavLink>
+            ))}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-3">
+            {['MANAGER', 'PHARMACIST', 'ADMIN'].includes(user?.role ?? '') && <NotificationsBell />}
+            <button
+              onClick={toggle}
+              className="rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
+              title="Toggle theme"
             >
-              {n.label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="ml-auto flex items-center gap-3">
-          {['MANAGER', 'PHARMACIST', 'ADMIN'].includes(user?.role ?? '') && <NotificationsBell />}
-          <button
-            onClick={toggle}
-            className="rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
-            title="Toggle theme"
-          >
-            {dark ? '☀️' : '🌙'}
-          </button>
-          <span className="text-sm text-ink-muted">
-            {user?.fullName} <span className="opacity-70">({user?.role})</span>
-          </span>
-          <button
-            onClick={logout}
-            className="rounded border border-edge px-3 py-1.5 text-sm hover:bg-danger/10 hover:text-danger"
-          >
-            Sign out
-          </button>
+              {dark ? '☀️' : '🌙'}
+            </button>
+            {/* User + sign out: inline on desktop, moved into drawer on mobile */}
+            <span className="hidden text-sm text-ink-muted lg:inline">
+              {user?.fullName} <span className="opacity-70">({user?.role})</span>
+            </span>
+            <button
+              onClick={logout}
+              className="hidden rounded border border-edge px-3 py-1.5 text-sm hover:bg-danger/10 hover:text-danger lg:inline-block"
+            >
+              Sign out
+            </button>
+            {/* Hamburger: mobile only */}
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              className="rounded border border-edge px-2.5 py-1 text-lg leading-none lg:hidden"
+              aria-label="Toggle menu"
+              aria-expanded={menuOpen}
+            >
+              {menuOpen ? '✕' : '☰'}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile nav drawer */}
+        {menuOpen && (
+          <nav className="flex flex-col gap-1 border-t border-edge px-3 pb-3 pt-2 lg:hidden">
+            {visibleNav.map((n) => (
+              <NavLink
+                key={n.to}
+                to={n.to}
+                onClick={() => setMenuOpen(false)}
+                className={({ isActive }) =>
+                  `rounded px-3 py-2.5 text-base font-medium ${
+                    isActive ? 'bg-primary/15 text-primary' : 'text-ink-muted hover:text-ink'
+                  }`
+                }
+              >
+                {n.label}
+              </NavLink>
+            ))}
+            <div className="mt-2 flex items-center justify-between border-t border-edge px-1 pt-3 text-sm text-ink-muted">
+              <span>
+                {user?.fullName} <span className="opacity-70">({user?.role})</span>
+              </span>
+              <button
+                onClick={logout}
+                className="rounded border border-edge px-3 py-1.5 hover:bg-danger/10 hover:text-danger"
+              >
+                Sign out
+              </button>
+            </div>
+          </nav>
+        )}
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto">

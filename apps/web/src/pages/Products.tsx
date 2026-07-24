@@ -234,7 +234,7 @@ function QbImportButton() {
       </label>
 
       {(result || error) && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={() => { setResult(null); setError(null); }}>
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" onClick={() => { setResult(null); setError(null); }}>
           <div className="w-full max-w-md rounded-xl border border-edge bg-surface p-6" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold">QuickBooks import</h2>
             {error && <p className="mt-3 rounded bg-danger/10 px-3 py-2 text-danger">{error}</p>}
