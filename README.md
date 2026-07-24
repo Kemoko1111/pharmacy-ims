@@ -7,6 +7,11 @@ environs, replacing a discontinued QuickBooks Desktop Point of Sale 19.0 install
 Built as a **modular monolith**, deployed to a live URL, resilient to internet outages at
 the point of sale.
 
+**Live:** web [pharmatrack-web-eosin.vercel.app](https://pharmatrack-web-eosin.vercel.app)
+· API [pharmatrack-api-0lnu.onrender.com/health](https://pharmatrack-api-0lnu.onrender.com/health)
+· demo logins `admin`/`boateng`/`adjoa`/`kwame`/`akosua`, password `ChangeMe123!`
+(seed data only — no client data).
+
 > ⚠️ **Placeholders.** Anything in `[SQUARE BRACKETS]` (business name, contact names,
 > interview data, signatures) must be filled with **real** information gathered during
 > site visits. Per the course brief §6, fabricated client evidence is academic misconduct.
