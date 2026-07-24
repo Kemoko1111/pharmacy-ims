@@ -34,6 +34,6 @@ Every ✅ names the code that enforces it, so the panel can verify claims.
 - [x] `pnpm audit` job in CI
 - [x] Nightly `pg_dump` workflow (activates once `PROD_DATABASE_URL` secret is set)
 - [ ] Rotate the demo credentials; disable the seeded `admin` account in prod
-- [ ] Tighten CSP `connect-src` from `*.onrender.com` to the exact API domain after the Render deploy
+- [x] Tighten CSP `connect-src` from `*.onrender.com` to the exact API domain after the Render deploy
 - [ ] Verify the Neon connection uses `sslmode=require` and credentials live only in Render env vars
 - [ ] Run this checklist against the live URLs, screenshot evidence for the report

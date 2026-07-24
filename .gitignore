@@ -15,6 +15,12 @@ coverage/
 *.dump
 apps/api/.pgdata/
 
+# deployment tooling (local links / agent-skill caches)
+.vercel/
+apps/web/.agents/
+apps/web/.claude/
+apps/web/skills-lock.json
+
 # OS / editor
 .DS_Store
 .idea/
