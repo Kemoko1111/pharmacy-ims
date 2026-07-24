@@ -24,4 +24,4 @@ COPY --from=build /repo/apps/api/dist /app/dist
 
 EXPOSE 3000
 # migrations run on boot so deploys stay zero-touch (ADR-009)
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+CMD ["sh", "-c", "npx prisma@6 migrate deploy && node dist/main.js"]
