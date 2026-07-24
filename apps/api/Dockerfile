@@ -14,7 +14,8 @@ COPY apps/api apps/api
 RUN pnpm --filter @pharmatrack/shared build \
  && pnpm --filter @pharmatrack/api db:generate \
  && pnpm --filter @pharmatrack/api build \
- && pnpm --filter @pharmatrack/api deploy --prod --legacy /app
+ && pnpm --filter @pharmatrack/api deploy --prod --legacy /app \
+ && cd /app && npx prisma@6 generate
 
 FROM node:22-alpine
 WORKDIR /app
