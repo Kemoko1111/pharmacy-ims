@@ -1,21 +1,41 @@
 # Keeps the free Render instance from cold-sleeping during waking hours (ADR-009).
 # No-op until the RENDER_API_URL repository variable is set (e.g.
 # https://pharmatrack-api.onrender.com). Cold starts outside these hours are
-# masked by the offline-first POS anyway.
+# masked by the offline-first POS and the app's cold-start handling anyway.
+#
+# Note: GitHub's scheduled runner is best-effort and often skips/coalesces runs,
+# so this reduces cold starts but cannot guarantee zero sleep. The frontend
+# cold-start fallback (src/lib/auth.tsx) is what keeps the UI usable regardless.
 name: keep-warm
 on:
   schedule:
-    - cron: "*/10 6-22 * * *" # every 10 min, 06:00-22:59 UTC
+    - cron: "*/5 6-22 * * *" # every 5 min, 06:00-22:59 UTC (fights scheduler drift)
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /health
+      - name: Ping /health (wake, then confirm warm)
         run: |
-          if [ -n "${{ vars.RENDER_API_URL }}" ]; then
-            curl -fsS --max-time 60 "${{ vars.RENDER_API_URL }}/health" && echo "warm"
-          else
+          URL="${{ vars.RENDER_API_URL }}"
+          if [ -z "$URL" ]; then
             echo "RENDER_API_URL variable not set — skipping (expected before first deploy)"
+            exit 0
           fi
+          # A cold instance can take well over 60s to wake, so a single short
+          # request would time out and mark this run "failed" even though the
+          # ping is doing its job. Instead: retry with a generous timeout and
+          # treat a slow-but-eventually-200 wake as success. Only a genuine
+          # outage (never returns 200) fails the run.
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$URL/health" || echo 000)
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "warm"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "still not warm after retries — API may be down"
+          exit 1

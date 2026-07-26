@@ -62,9 +62,9 @@ async function tryRefresh(): Promise<RefreshOutcome> {
 
 export async function api<T = unknown>(
   path: string,
-  options: { method?: string; body?: unknown; retry?: boolean } = {},
+  options: { method?: string; body?: unknown; retry?: boolean; signal?: AbortSignal } = {},
 ): Promise<T> {
-  const { method = 'GET', body, retry = true } = options;
+  const { method = 'GET', body, retry = true, signal } = options;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
@@ -72,6 +72,7 @@ export async function api<T = unknown>(
       ...(store.access ? { Authorization: `Bearer ${store.access}` } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal,
   });
 
   if (res.status === 401 && retry && store.refresh) {

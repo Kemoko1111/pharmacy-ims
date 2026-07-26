@@ -18,9 +18,20 @@ import Settings from './pages/Settings';
 import AuditLog from './pages/AuditLog';
 
 function Protected({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
-  const { user, ready } = useAuth();
+  const { user, ready, waking } = useAuth();
   if (!ready) {
-    return <div className="grid h-full place-items-center text-ink-muted">Loading…</div>;
+    return (
+      <div className="grid h-full place-items-center px-6 text-center text-ink-muted">
+        <div>
+          <div className="animate-pulse text-lg">Loading…</div>
+          {waking && (
+            <p className="mt-2 max-w-xs text-sm">
+              Waking the server up — this can take up to ~30&nbsp;seconds on first use after a quiet period.
+            </p>
+          )}
+        </div>
+      </div>
+    );
   }
   if (!user) return <Navigate to="/login" replace />;
   if (roles && user.role !== 'ADMIN' && !roles.includes(user.role)) {
