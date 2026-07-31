@@ -163,7 +163,7 @@ describe('Branch isolation', () => {
     const kumasiHeaders = await authHeader(app, 'kumasi_manager');
 
     const batches = await request(app.getHttpServer())
-      .get('/api/v1/inventory/batches')
+      .get('/api/v1/batches')
       .set(kumasiHeaders);
     expect(batches.status).toBe(200);
     expect(batches.body.data.map((b: { id: string }) => b.id)).toEqual([kumasiBatchId]);
@@ -213,7 +213,7 @@ describe('Branch isolation', () => {
 
       const asAccra = await authHeader(app, 'owner');
       const accraBatches = await request(app.getHttpServer())
-        .get('/api/v1/inventory/batches')
+        .get('/api/v1/batches')
         .set(asAccra);
       expect(accraBatches.body.data).toHaveLength(2); // EARLY + LATE
 
@@ -225,7 +225,7 @@ describe('Branch isolation', () => {
       expect(switched.body.activeBranch.code).toBe('KUM');
 
       const kumasiBatches = await request(app.getHttpServer())
-        .get('/api/v1/inventory/batches')
+        .get('/api/v1/batches')
         .set({ Authorization: `Bearer ${switched.body.accessToken}` });
       expect(kumasiBatches.body.data.map((b: { id: string }) => b.id)).toEqual([kumasiBatchId]);
     });

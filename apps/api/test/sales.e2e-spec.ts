@@ -39,7 +39,8 @@ describe('Sales / POS (US-06, US-07, ADR-006)', () => {
       .set(cashier)
       .send(saleBody(fix)); // 2 strips = 20 tablets
     expect(res.status).toBe(201);
-    expect(res.body.receiptNumber).toMatch(/^RCP-\d{4}-\d{6}$/);
+    // Branch-code prefixed since ADR-010, still globally unique.
+    expect(res.body.receiptNumber).toMatch(/^[A-Z]{2,6}-RCP-\d{4}-\d{6}$/);
     expect(res.body.total).toBe('10');
 
     // change computed for cash

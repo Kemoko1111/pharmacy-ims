@@ -40,7 +40,8 @@ describe('Purchasing: PO → receiving (US-09, US-10, US-11)', () => {
         items: [{ productId: fix.productId, qtyBase: 100, unitCost: '0.25' }],
       });
     expect(po.status).toBe(201);
-    expect(po.body.poNumber).toMatch(/^PO-\d{4}-\d{4}$/);
+    // Branch-code prefixed since ADR-010.
+    expect(po.body.poNumber).toMatch(/^[A-Z]{2,6}-PO-\d{4}-\d{4}$/);
     expect(po.body.status).toBe('DRAFT');
 
     const sent = await request(app.getHttpServer())
@@ -60,7 +61,7 @@ describe('Purchasing: PO → receiving (US-09, US-10, US-11)', () => {
         ],
       });
     expect(grn1.status).toBe(201);
-    expect(grn1.body.grnNumber).toMatch(/^GRN-\d{4}-\d{4}$/);
+    expect(grn1.body.grnNumber).toMatch(/^[A-Z]{2,6}-GRN-\d{4}-\d{4}$/);
 
     const afterFirst = await request(app.getHttpServer())
       .get(`/api/v1/purchase-orders/${po.body.id}`)
