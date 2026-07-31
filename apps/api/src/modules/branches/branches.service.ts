@@ -19,8 +19,8 @@ export class BranchesService {
     private readonly audit: AuditService,
   ) {}
 
-  list(includeInactive = false) {
-    return this.prisma.branch.findMany({
+  async list(includeInactive = false) {
+    const branches = await this.prisma.branch.findMany({
       where: includeInactive ? {} : { isActive: true },
       select: {
         id: true,
@@ -28,10 +28,37 @@ export class BranchesService {
         name: true,
         address: true,
         phone: true,
+        receiptHeader: true,
         isActive: true,
       },
       orderBy: { code: 'asc' },
     });
+
+    // How many documents already carry each branch's code prefix. Returned so
+    // the UI can disable the code field with a reason instead of letting the
+    // admin type a new code and only then be refused. One grouped query, and
+    // raw because the branch-scope extension would filter these to the caller's
+    // own branch (see `update`).
+    const counts = await this.prisma.$queryRaw<{ branch_id: string; documents: bigint }[]>`
+      SELECT branch_id, SUM(n) AS documents FROM (
+        SELECT branch_id, COUNT(*) AS n FROM sales           GROUP BY branch_id
+        UNION ALL
+        SELECT branch_id, COUNT(*) AS n FROM purchase_orders GROUP BY branch_id
+        UNION ALL
+        SELECT branch_id, COUNT(*) AS n FROM goods_receipts  GROUP BY branch_id
+        UNION ALL
+        SELECT from_branch_id AS branch_id, COUNT(*) AS n FROM stock_transfers GROUP BY from_branch_id
+        UNION ALL
+        SELECT to_branch_id   AS branch_id, COUNT(*) AS n FROM stock_transfers GROUP BY to_branch_id
+      ) t GROUP BY branch_id`;
+
+    const byId = new Map(counts.map((c) => [c.branch_id, Number(c.documents)]));
+    return branches.map((b) => ({
+      ...b,
+      documentCount: byId.get(b.id) ?? 0,
+      /** The code is baked into issued document numbers once any exist. */
+      codeLocked: (byId.get(b.id) ?? 0) > 0,
+    }));
   }
 
   async create(dto: CreateBranchDto, actorId: string) {
