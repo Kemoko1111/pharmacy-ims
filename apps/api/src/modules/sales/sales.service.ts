@@ -37,6 +37,7 @@ const saleInclude = {
   },
   payments: true,
   cashier: { select: { fullName: true } },
+  branch: { select: { code: true } },
 } satisfies Prisma.SaleInclude;
 
 @Injectable()
@@ -541,6 +542,9 @@ export class SalesService {
   private serialize(sale: Prisma.SaleGetPayload<{ include: typeof saleInclude }>) {
     return {
       id: sale.id,
+      // Only distinguishing in consolidated mode, where rows span shops.
+      branchId: sale.branchId,
+      branchCode: sale.branch.code,
       clientSaleId: sale.clientSaleId,
       receiptNumber: sale.receiptNumber,
       cashierId: sale.cashierId,

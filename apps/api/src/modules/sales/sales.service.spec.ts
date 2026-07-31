@@ -137,6 +137,7 @@ function buildHarness(opts: {
     soldAt: new Date(),
     syncedOffline: false,
     cashier: { fullName: 'Akosua Mensah' },
+    branch: { code: 'ACC' },
     items: [],
     payments: [],
   });

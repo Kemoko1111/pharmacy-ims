@@ -33,7 +33,10 @@ export class InventoryService {
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.batch.findMany({
         where,
-        include: { product: { select: { name: true, baseUnit: true } } },
+        include: {
+          product: { select: { name: true, baseUnit: true } },
+          branch: { select: { code: true } },
+        },
         orderBy: { expiryDate: 'asc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -43,6 +46,8 @@ export class InventoryService {
     return listEnvelope(
       rows.map((b) => ({
         id: b.id,
+        branchId: b.branchId,
+        branchCode: b.branch.code,
         productId: b.productId,
         productName: b.product.name,
         baseUnit: b.product.baseUnit,

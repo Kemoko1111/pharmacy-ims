@@ -14,6 +14,7 @@ const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/batches', label: 'Batches', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
   { to: '/purchasing', label: 'Purchasing', roles: ['INVENTORY_OFFICER', 'MANAGER'] },
   { to: '/adjustments', label: 'Adjustments', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
+  { to: '/transfers', label: 'Transfers', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
   { to: '/sales', label: 'Sales' },
   { to: '/customers', label: 'Customers', roles: ['PHARMACIST', 'MANAGER'] },
   { to: '/reports', label: 'Reports', roles: ['MANAGER', 'PHARMACIST'] },
