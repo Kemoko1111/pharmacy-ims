@@ -38,7 +38,7 @@ a cross-branch write (ADR-010).
 
 | Method & path | Roles | Request body | Response |
 |---|---|---|---|
-| `GET /branches` | any | `?includeInactive=true` | `200 [{ id, code, name, address, phone, isActive }]` — readable by all: the transfer destination picker and user-assignment UI need it. Seeing that a shop exists is not the same as reading its stock. |
+| `GET /branches` | any | `?includeInactive=true` | `200 [{ id, code, name, address, phone, receiptHeader, isActive, documentCount, codeLocked }]` — readable by all: the transfer destination picker and user-assignment UI need it. Seeing that a shop exists is not the same as reading its stock. `documentCount`/`codeLocked` let the admin UI disable the code field with a reason rather than failing on submit. |
 | `POST /branches` | A | `{ code, name, address?, phone?, receiptHeader? }` | `201 Branch` · `400 BRANCH_CODE_TAKEN` |
 | `PATCH /branches/:id` | A | subset of `{ name, address, phone, isActive, receiptHeader }` | `200 Branch` · `400 BRANCH_CODE_IMMUTABLE` — the code is embedded in every document number already issued |
 

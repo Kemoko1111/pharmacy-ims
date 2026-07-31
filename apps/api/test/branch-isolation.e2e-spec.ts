@@ -239,6 +239,30 @@ describe('Branch isolation', () => {
       expect(res.body.code).toBe('REAL');
     });
 
+    it('tells the branch list whether each code is still changeable', async () => {
+      await createUser('list_admin', 'ADMIN', testBranch.primaryId);
+      const headers = await authHeader(app, 'list_admin');
+
+      const before = await request(app.getHttpServer()).get('/api/v1/branches').set(headers);
+      const accraBefore = before.body.find((b: { code: string }) => b.code === 'ACC');
+      expect(accraBefore.documentCount).toBe(0);
+      expect(accraBefore.codeLocked).toBe(false);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/sales')
+        .set(await authHeader(app, 'accra_cashier'))
+        .send(saleBody(fix, { items: [{ productId: fix.productId, quantity: 1, unitPrice: '0.50' }], payments: [{ method: 'CASH', amount: '0.50' }] }));
+
+      const after = await request(app.getHttpServer()).get('/api/v1/branches').set(headers);
+      const accraAfter = after.body.find((b: { code: string }) => b.code === 'ACC');
+      expect(accraAfter.documentCount).toBe(1);
+      expect(accraAfter.codeLocked).toBe(true);
+
+      // The other branch is unaffected — the count is per branch, not global.
+      const kumasi = after.body.find((b: { code: string }) => b.code === 'KUM');
+      expect(kumasi.codeLocked).toBe(false);
+    });
+
     it('refuses once a document carries the prefix', async () => {
       await createUser('code_admin2', 'ADMIN', testBranch.primaryId);
       // Accra already has stock; ring up a sale so a receipt number exists.

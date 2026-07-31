@@ -12,6 +12,7 @@ import Batches from './pages/Batches';
 import Purchasing from './pages/Purchasing';
 import Adjustments from './pages/Adjustments';
 import Transfers from './pages/Transfers';
+import Branches from './pages/Branches';
 import Reports from './pages/Reports';
 import Customers from './pages/Customers';
 import Users from './pages/Users';
@@ -124,6 +125,14 @@ export default function App() {
           element={
             <Protected roles={['MANAGER']}>
               <AuditLog />
+            </Protected>
+          }
+        />
+        <Route
+          path="branches"
+          element={
+            <Protected roles={[]}>
+              <Branches />
             </Protected>
           }
         />
