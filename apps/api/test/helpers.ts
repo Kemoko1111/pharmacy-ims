@@ -83,10 +83,15 @@ export async function resetDb() {
 
 const PASSWORD = 'Password1';
 
+/**
+ * `branchId: null` creates an unassigned account — used to exercise the
+ * bootstrap path, where an admin must be able to sign in on a fresh install
+ * that has no branches yet.
+ */
 export async function createUser(
   username: string,
   role: UserRole,
-  branchId: string = testBranch.primaryId,
+  branchId: string | null = testBranch.primaryId,
 ) {
   const user = await prisma.user.create({
     data: {
@@ -97,10 +102,11 @@ export async function createUser(
       passwordHash: await hash(PASSWORD),
     },
   });
-  // Login refuses an account with no branch, so every test user gets one.
-  await prisma.userBranch.create({
-    data: { userId: user.id, branchId, isDefault: true },
-  });
+  if (branchId) {
+    await prisma.userBranch.create({
+      data: { userId: user.id, branchId, isDefault: true },
+    });
+  }
   return user;
 }
 

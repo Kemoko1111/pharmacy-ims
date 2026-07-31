@@ -6,6 +6,7 @@ import {
   authHeader,
   createTestApp,
   createUser,
+  login,
   prisma,
   resetDb,
   saleBody,
@@ -184,6 +185,76 @@ describe('Branch isolation', () => {
     expect(snap.status).toBe(200);
     const product = snap.body.products.find((p: { id: string }) => p.id === fix.productId);
     expect(product.qtyOnHand).toBe(7);
+  });
+
+  describe('bootstrapping an install', () => {
+    it('lets an admin sign in with no branch configured, so the first one can be created', async () => {
+      // Deadlock guard: only an admin can create a branch, so refusing the
+      // login when none exists would make a fresh install unusable forever.
+      await prisma.$executeRawUnsafe(
+        'TRUNCATE TABLE "sale_return_items","sale_returns","payments","sale_items","sales",' +
+          '"stock_movements","stock_adjustments","goods_receipt_items","goods_receipts",' +
+          '"purchase_order_items","purchase_orders","stock_transfer_items","stock_transfers",' +
+          '"batches","branch_product_settings","notifications","audit_logs","user_branches",' +
+          '"branches" RESTART IDENTITY CASCADE',
+      );
+      await createUser('bootstrap_admin', 'ADMIN', null);
+
+      const res = await login(app, 'bootstrap_admin');
+      expect(res.status).toBe(200);
+      expect(res.body.user.activeBranch).toBeNull();
+      expect(res.body.user.branches).toEqual([]);
+
+      const headers = { Authorization: `Bearer ${res.body.accessToken}` };
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/branches')
+        .set(headers)
+        .send({ code: 'MAIN', name: 'Main Branch' });
+      expect(created.status).toBe(201);
+      expect(created.body.code).toBe('MAIN');
+    });
+
+    it('refuses a non-admin with no branch, who has nothing to bootstrap', async () => {
+      await prisma.userBranch.deleteMany({ where: {} });
+      const res = await login(app, 'accra_cashier');
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('NO_BRANCH_ASSIGNED');
+    });
+  });
+
+  describe('renaming a branch code', () => {
+    it('allows it while the branch has issued no documents', async () => {
+      const admin = await createUser('code_admin', 'ADMIN', testBranch.primaryId);
+      expect(admin).toBeTruthy();
+      const fresh = await prisma.branch.create({
+        data: { id: uuid(), code: 'TMP', name: 'Placeholder' },
+      });
+
+      const res = await request(app.getHttpServer())
+        .patch(`/api/v1/branches/${fresh.id}`)
+        .set(await authHeader(app, 'code_admin'))
+        .send({ code: 'REAL', name: 'The Real Shop' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.code).toBe('REAL');
+    });
+
+    it('refuses once a document carries the prefix', async () => {
+      await createUser('code_admin2', 'ADMIN', testBranch.primaryId);
+      // Accra already has stock; ring up a sale so a receipt number exists.
+      await request(app.getHttpServer())
+        .post('/api/v1/sales')
+        .set(await authHeader(app, 'accra_cashier'))
+        .send(saleBody(fix, { items: [{ productId: fix.productId, quantity: 1, unitPrice: '0.50' }], payments: [{ method: 'CASH', amount: '0.50' }] }));
+
+      const res = await request(app.getHttpServer())
+        .patch(`/api/v1/branches/${testBranch.primaryId}`)
+        .set(await authHeader(app, 'code_admin2'))
+        .send({ code: 'NEW' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('BRANCH_CODE_IMMUTABLE');
+    });
   });
 
   describe('switching branch', () => {

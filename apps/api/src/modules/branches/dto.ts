@@ -28,8 +28,10 @@ export class CreateBranchDto {
 }
 
 export class UpdateBranchDto {
+  /** Changeable only until the branch has issued its first document. */
   @IsOptional()
   @IsString()
+  @Matches(/^[A-Za-z]{2,6}$/, { message: 'Code must be 2–6 letters' })
   code?: string;
 
   @IsOptional()

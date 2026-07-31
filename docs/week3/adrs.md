@@ -303,6 +303,14 @@ Supporting decisions:
 6. **`batches` is unique on `(branch_id, product_id, batch_number, expiry_date)`.** The
    same supplier batch legitimately arrives at two shops; the old global constraint would
    have rejected the second delivery.
+7. **Branches are created by an administrator, not shipped with the system.** We do not
+   know where the client's shops are, and seeding invented locations would put fabricated
+   client data into a live system (MoU §4). The seed therefore creates a single, anonymous
+   placeholder branch (`MAIN`) to hold demo stock, and the admin creates the real branches
+   once site visits confirm them. Two consequences follow: an admin must be able to sign
+   in when **no** branch exists yet — otherwise nobody could ever create the first one, a
+   deadlock — and a branch code must stay editable until that branch has issued its first
+   document.
 
 **Consequences.** *Easier:* consolidated reporting is one `GROUP BY`; hosting is
 unchanged; the shared catalogue means a product added once appears everywhere;
