@@ -67,18 +67,47 @@ export class BranchesService {
   async update(id: string, dto: UpdateBranchDto, actorId: string) {
     const before = await this.prisma.branch.findUniqueOrThrow({ where: { id } });
 
-    // The code is baked into every receipt, PO and GRN already issued, so
-    // renaming it would orphan those references.
+    // The code is baked into every receipt, PO, GRN and transfer number already
+    // issued, so changing it once documents exist would orphan those references.
+    // Before any are issued it is just a label, and a placeholder branch created
+    // at install time has to be renameable once the real shop is known.
+    //
+    // Counted in raw SQL deliberately: the branch-scope extension would AND its
+    // own branch filter onto these, so an admin scoped to branch A checking
+    // branch B would always count zero and wrongly be allowed through.
     if (dto.code && dto.code.toUpperCase() !== before.code) {
-      throw new BadRequestException({
-        code: 'BRANCH_CODE_IMMUTABLE',
-        message: 'Branch code cannot change — it is embedded in issued document numbers',
-      });
+      const [{ documents }] = await this.prisma.$queryRaw<{ documents: bigint }[]>`
+        SELECT (
+          (SELECT COUNT(*) FROM sales            WHERE branch_id = ${id}::uuid) +
+          (SELECT COUNT(*) FROM purchase_orders  WHERE branch_id = ${id}::uuid) +
+          (SELECT COUNT(*) FROM goods_receipts   WHERE branch_id = ${id}::uuid) +
+          (SELECT COUNT(*) FROM stock_transfers  WHERE from_branch_id = ${id}::uuid
+                                                    OR to_branch_id  = ${id}::uuid)
+        ) AS documents`;
+
+      if (Number(documents) > 0) {
+        throw new BadRequestException({
+          code: 'BRANCH_CODE_IMMUTABLE',
+          message:
+            `Branch code cannot change — ${documents} document(s) already carry the "${before.code}" prefix`,
+          details: { documents: Number(documents) },
+        });
+      }
+
+      const code = dto.code.toUpperCase();
+      const clash = await this.prisma.branch.findFirst({ where: { code, NOT: { id } } });
+      if (clash) {
+        throw new BadRequestException({
+          code: 'BRANCH_CODE_TAKEN',
+          message: `Branch code "${code}" is already in use`,
+        });
+      }
     }
 
     const branch = await this.prisma.branch.update({
       where: { id },
       data: {
+        ...(dto.code !== undefined ? { code: dto.code.toUpperCase() } : {}),
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(dto.address !== undefined ? { address: dto.address } : {}),
         ...(dto.phone !== undefined ? { phone: dto.phone } : {}),

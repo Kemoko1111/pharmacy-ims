@@ -44,11 +44,12 @@ export class AuthService {
         select: { id: true, code: true, name: true },
         orderBy: { code: 'asc' },
       });
+      // Bootstrap: on a brand-new install no branch exists yet, and only an
+      // admin can create one. Refusing the login here would deadlock the system
+      // — nobody could ever sign in to create the first branch. So an admin
+      // signs in branchless (consolidated, read-only for stock) and creates it.
       if (all.length === 0) {
-        throw new UnauthorizedException({
-          code: 'NO_BRANCH_CONFIGURED',
-          message: 'No active branch exists — create one first',
-        });
+        return { branches: [], activeBranch: null };
       }
       const preferred = memberships[0]?.branch ?? all[0];
       return { branches: all, activeBranch: preferred };
@@ -88,7 +89,9 @@ export class AuthService {
   ) {
     const { branches, activeBranch } = await this.resolveBranches(user);
     const branchIds = branches.map((b) => b.id);
-    const accessToken = await this.signAccessToken(user, activeBranch.id, branchIds);
+    // activeBranch is null only for an admin bootstrapping an install with no
+    // branches yet (see resolveBranches).
+    const accessToken = await this.signAccessToken(user, activeBranch?.id ?? null, branchIds);
 
     const refreshToken = randomBytes(48).toString('base64url');
     const ttlHours = Number(process.env.JWT_REFRESH_TTL_HOURS ?? 12);

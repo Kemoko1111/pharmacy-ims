@@ -24,7 +24,7 @@
 
 | Method & path | Roles | Request body | Response |
 |---|---|---|---|
-| `POST /auth/login` | public | `{ username, password }` | `200 { accessToken, refreshToken, user: { id, fullName, role, activeBranch, branches } }` · `423` when locked · `401 NO_BRANCH_ASSIGNED` if the account has no branch |
+| `POST /auth/login` | public | `{ username, password }` | `200 { accessToken, refreshToken, user: { id, fullName, role, activeBranch, branches } }` · `423` when locked · `401 NO_BRANCH_ASSIGNED` if a non-admin account has no branch. **An ADMIN on a fresh install with no branches signs in with `activeBranch: null`** so the first branch can be created — refusing here would deadlock the system, since only an admin can create one |
 | `POST /auth/refresh` | public | `{ refreshToken }` | `200 { accessToken, refreshToken }` (rotated) |
 | `POST /auth/logout` | any | `{ refreshToken }` | `204` (token revoked) |
 | `GET /auth/me` | any | — | `200 { id, username, fullName, role, activeBranch, branches }` |
@@ -216,10 +216,9 @@ branches; stock valuation sums branches rather than listing a product once per s
 | `BRANCH_FORBIDDEN` | 401 | The user is not assigned to the requested branch |
 | `CONSOLIDATED_FORBIDDEN` | 401 | Only ADMIN may view all branches at once |
 | `NO_BRANCH_ASSIGNED` | 401 | The account has no branch, so it cannot sign in |
-| `NO_BRANCH_CONFIGURED` | 401 | No active branch exists yet — create one first |
 | `BRANCH_UNKNOWN` | 400/422 | Branch or batch does not exist, or is not this branch's stock |
 | `BRANCH_CODE_TAKEN` | 400 | Another branch already uses that code |
-| `BRANCH_CODE_IMMUTABLE` | 400 | The code is embedded in issued document numbers |
+| `BRANCH_CODE_IMMUTABLE` | 400 | The branch has issued documents carrying the code |
 | `DEFAULT_BRANCH_NOT_ASSIGNED` | 400 | The sign-in branch must be one of the assigned branches |
 | `PO_BRANCH_MISMATCH` | 422 | Goods received against an order raised for another branch |
 | `SAME_BRANCH` | 422 | A transfer's source and destination must differ |

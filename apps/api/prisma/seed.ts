@@ -397,39 +397,29 @@ async function main() {
 
   const passwordHash = await hash(DEMO_PASSWORD);
 
-  // ── Branches (ADR-010) ─────────────────────────────────────────────────────
-  // Two, deliberately: one branch proves nothing about isolation.
-  const branches = [
-    {
-      id: uuid(),
-      code: 'ACC',
-      name: 'Accra Main',
-      address: 'Spintex Road, Accra',
-      phone: '020 000 0000',
-      receiptHeader: { line1: 'PharmaTrack Demo Pharmacy', line2: 'Spintex Road, Accra', line3: 'Tel: 020 000 0000' },
-    },
-    {
-      id: uuid(),
-      code: 'KUM',
-      name: 'Kumasi Branch',
-      address: 'Adum, Kumasi',
-      phone: '020 111 1111',
-      receiptHeader: { line1: 'PharmaTrack Demo Pharmacy — Kumasi', line2: 'Adum, Kumasi', line3: 'Tel: 020 111 1111' },
-    },
-  ];
-  await prisma.branch.createMany({ data: branches });
-  const [accra, kumasi] = branches;
+  // ── Branch (ADR-010) ───────────────────────────────────────────────────────
+  // ONE placeholder, deliberately anonymous. We do not know where the client's
+  // shops actually are, and inventing plausible Ghanaian locations would put
+  // fabricated client data into a live system (MoU §4 / brief §6). The admin
+  // creates the real branches from the Branches screen once site visits confirm
+  // them, and renames or deactivates this one. No address or phone is guessed;
+  // receipt_header falls back to the global setting until someone fills it in.
+  const mainBranch = {
+    id: uuid(),
+    code: 'MAIN',
+    name: 'Main Branch',
+  };
+  await prisma.branch.create({ data: mainBranch });
 
-  // ── Users: one per role, scoped to a branch ────────────────────────────────
-  // A Manager belongs to exactly one branch (ADR-010), so Kumasi gets its own.
+  // ── Users: one per role, all at the placeholder branch ─────────────────────
+  // A Manager belongs to exactly one branch (ADR-010). Staff for any further
+  // branch get created alongside that branch, by the admin.
   const users = [
-    { username: 'admin', fullName: 'System Admin', role: 'ADMIN' as const, branch: accra.id },
-    { username: 'boateng', fullName: 'Mr. Boateng (Owner)', role: 'MANAGER' as const, branch: accra.id },
-    { username: 'adjoa', fullName: 'Adjoa Mensah (Pharmacist)', role: 'PHARMACIST' as const, branch: accra.id },
-    { username: 'kwame', fullName: 'Kwame Osei (Inventory)', role: 'INVENTORY_OFFICER' as const, branch: accra.id },
-    { username: 'akosua', fullName: 'Akosua Asante (Cashier)', role: 'CASHIER' as const, branch: accra.id },
-    { username: 'yaw', fullName: 'Yaw Darko (Kumasi Manager)', role: 'MANAGER' as const, branch: kumasi.id },
-    { username: 'efua', fullName: 'Efua Owusu (Kumasi Cashier)', role: 'CASHIER' as const, branch: kumasi.id },
+    { username: 'admin', fullName: 'System Admin', role: 'ADMIN' as const, branch: mainBranch.id },
+    { username: 'boateng', fullName: 'Mr. Boateng (Owner)', role: 'MANAGER' as const, branch: mainBranch.id },
+    { username: 'adjoa', fullName: 'Adjoa Mensah (Pharmacist)', role: 'PHARMACIST' as const, branch: mainBranch.id },
+    { username: 'kwame', fullName: 'Kwame Osei (Inventory)', role: 'INVENTORY_OFFICER' as const, branch: mainBranch.id },
+    { username: 'akosua', fullName: 'Akosua Asante (Cashier)', role: 'CASHIER' as const, branch: mainBranch.id },
   ].map((u) => ({ id: uuid(), passwordHash, ...u }));
 
   await prisma.user.createMany({
@@ -529,22 +519,10 @@ async function main() {
       }
     }
 
-    // Accra carries the full spec. Kumasi carries a lighter, partly different
-    // holding — and every fourth product not at all, so the reports have real
-    // per-branch differences to show (a product low at Kumasi, healthy at Accra).
+    // All demo stock sits at the placeholder branch. Stock for any further
+    // branch arrives the way it will in reality — a goods receipt or a transfer.
     const stockPlan: { branchId: string; batches: BatchSpec[] }[] = [
-      { branchId: accra.id, batches: spec.batches },
-      {
-        branchId: kumasi.id,
-        batches:
-          productCount % 4 === 0
-            ? []
-            : spec.batches.slice(0, 1).map((b) => ({
-                ...b,
-                batchNumber: b.batchNumber, // same supplier batch, second location
-                qty: Math.max(1, Math.floor(b.qty * 0.35)),
-              })),
-      },
+      { branchId: mainBranch.id, batches: spec.batches },
     ];
 
     for (const { branchId, batches } of stockPlan) {
@@ -580,24 +558,13 @@ async function main() {
       }
     }
 
-    // Kumasi is the smaller shop — it reorders earlier on the fast movers.
-    if (spec.reorderLevel >= 100) {
-      await prisma.branchProductSetting.create({
-        data: {
-          branchId: kumasi.id,
-          productId,
-          reorderLevel: Math.floor(spec.reorderLevel / 2),
-          updatedBy: admin.id,
-        },
-      });
-    }
   }
 
   console.log(
-    `Seeded: ${branches.length} branches (${branches.map((b) => b.code).join(', ')}), ` +
-      `${users.length} users (password: ${DEMO_PASSWORD}), ` +
-      `${categoryNames.length} categories, ${productCount} products, ` +
-      `${batchCount} batches across branches.`,
+    `Seeded: 1 placeholder branch (${mainBranch.code} — rename it, or create the real ` +
+      `branches from the Branches screen), ${users.length} users ` +
+      `(password: ${DEMO_PASSWORD}), ${categoryNames.length} categories, ` +
+      `${productCount} products, ${batchCount} batches.`,
   );
 }
 
