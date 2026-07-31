@@ -85,6 +85,9 @@ export class ReturnsService {
         if (input.restock) {
           await tx.stockMovement.create({
             data: {
+              // Restock lands at the branch that made the sale, which the
+              // branch-scoped lookup above already guarantees is the actor's.
+              branchId: sale.branchId,
               productId: item.productId,
               batchId: item.batchId,
               qtyDelta: input.qtyBase,

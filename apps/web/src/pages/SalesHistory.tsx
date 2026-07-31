@@ -8,6 +8,7 @@ import { ghs, shortDate, timeOf } from '../lib/format';
 interface SaleRow {
   id: string;
   receiptNumber: string;
+  branchCode: string;
   cashierName: string;
   status: 'COMPLETED' | 'VOIDED';
   total: string;
@@ -19,6 +20,8 @@ interface SaleRow {
 
 export default function SalesHistory() {
   const { user } = useAuth();
+  // ADMIN viewing every shop at once: only then does a branch column mean anything.
+  const consolidated = user?.activeBranch === null;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [q, setQ] = useState('');
@@ -56,6 +59,7 @@ export default function SalesHistory() {
           <thead>
             <tr className="border-b border-edge text-left text-sm text-ink-muted">
               <th className="px-3 py-2">Receipt</th>
+              {consolidated && <th className="px-3 py-2">Branch</th>}
               <th className="px-3 py-2">When</th>
               <th className="px-3 py-2">Cashier</th>
               <th className="px-3 py-2">Items</th>
@@ -73,6 +77,9 @@ export default function SalesHistory() {
                     <span className="ml-2 rounded bg-danger/15 px-1.5 text-xs font-semibold text-danger">VOID</span>
                   )}
                 </td>
+                {consolidated && (
+                  <td className="px-3 py-2 font-mono text-xs text-ink-muted">{s.branchCode}</td>
+                )}
                 <td className="px-3 py-2 text-ink-muted">
                   {shortDate(s.soldAt)} {timeOf(s.soldAt)}
                 </td>

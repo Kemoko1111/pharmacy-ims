@@ -1,5 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { Roles } from '../../common/roles.decorator';
+import { CurrentUser } from '../../common/current-user.decorator';
+import type { RequestUser } from '../../common/jwt-auth.guard';
 import { InventoryService } from './inventory.service';
 import { BatchesQuery, MovementsQuery } from './dto';
 
@@ -12,9 +14,10 @@ export class InventoryController {
     return this.inventory.listBatches(q);
   }
 
+  // Reads a view, so branch comes from the token rather than the extension.
   @Get('inventory/stock')
-  stock(@Query('lowStock') lowStock?: string) {
-    return this.inventory.stock(lowStock);
+  stock(@CurrentUser() user: RequestUser, @Query('lowStock') lowStock?: string) {
+    return this.inventory.stock(user.branchId, lowStock);
   }
 
   @Get('inventory/movements')

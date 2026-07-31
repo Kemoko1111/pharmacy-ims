@@ -53,9 +53,16 @@ export default function Pos() {
   useEffect(() => {
     if (!user) return;
     if (!holdOpen) {
-      db.heldSales.where('cashierId').equals(user.id).count().then(setHeldCount).catch(() => {});
+      const branchId = user.activeBranch?.id ?? '';
+      db.heldSales
+        .where('cashierId')
+        .equals(user.id)
+        .and((h) => h.branchId === branchId)
+        .count()
+        .then(setHeldCount)
+        .catch(() => {});
     }
-  }, [user, holdOpen]);
+  }, [user, holdOpen, user?.activeBranch?.id]);
 
   const { data: results = [] } = useQuery({
     queryKey: ['pos-search', debouncedQ],
@@ -234,8 +241,11 @@ export default function Pos() {
         return;
       }
       // network failure or offline → queue (ADR-006), print local receipt
+      // Stamp the branch the money was actually taken at (ADR-010) — the token
+      // may point somewhere else by the time the queue drains.
       await queueSale({
         clientSaleId: body.clientSaleId,
+        branchId: user?.activeBranch?.id ?? '',
         body: body as never,
         queuedAt: new Date().toISOString(),
         cashierName: user?.fullName ?? '',

@@ -14,23 +14,41 @@
 - **Lists:** `?page=&pageSize=&q=&sort=` standard; all lists paginated.
 - **IDs:** UUIDs generated client-side where offline matters (sales), server-side otherwise.
 - **Validation:** every body validated by DTO (class-validator); unknown fields rejected.
+- **Branch (ADR-010):** every request acts in exactly one branch, carried in the access
+  token — never a client-supplied header or query param. Branch-scoped reads are filtered
+  automatically; branch-scoped writes are refused outside a branch. An ADMIN may hold a
+  *consolidated* token (`branch: null`) which reads across all branches and cannot write.
+  Cross-branch access returns `404`, not `403`: a branch is not told what another holds.
 
 ## auth module
 
 | Method & path | Roles | Request body | Response |
 |---|---|---|---|
-| `POST /auth/login` | public | `{ username, password }` | `200 { accessToken, refreshToken, user: { id, fullName, role } }` · `423` when locked |
+| `POST /auth/login` | public | `{ username, password }` | `200 { accessToken, refreshToken, user: { id, fullName, role, activeBranch, branches } }` · `423` when locked · `401 NO_BRANCH_ASSIGNED` if the account has no branch |
 | `POST /auth/refresh` | public | `{ refreshToken }` | `200 { accessToken, refreshToken }` (rotated) |
 | `POST /auth/logout` | any | `{ refreshToken }` | `204` (token revoked) |
-| `GET /auth/me` | any | — | `200 { id, username, fullName, role }` |
+| `GET /auth/me` | any | — | `200 { id, username, fullName, role, activeBranch, branches }` |
+| `POST /auth/switch-branch` | any | `{ branchId }` or `{ branchId: null }` | `200 { accessToken, activeBranch, branches }` — re-issues the access token against another branch; the refresh token is unchanged. `401 BRANCH_FORBIDDEN` if not assigned; `401 CONSOLIDATED_FORBIDDEN` for `null` below ADMIN |
+
+Branch lives in the signed token, so switching is a server round-trip rather than a
+client-side flag — a header the client could set would be one missed validation away from
+a cross-branch write (ADR-010).
+
+## branches module
+
+| Method & path | Roles | Request body | Response |
+|---|---|---|---|
+| `GET /branches` | any | `?includeInactive=true` | `200 [{ id, code, name, address, phone, isActive }]` — readable by all: the transfer destination picker and user-assignment UI need it. Seeing that a shop exists is not the same as reading its stock. |
+| `POST /branches` | A | `{ code, name, address?, phone?, receiptHeader? }` | `201 Branch` · `400 BRANCH_CODE_TAKEN` |
+| `PATCH /branches/:id` | A | subset of `{ name, address, phone, isActive, receiptHeader }` | `200 Branch` · `400 BRANCH_CODE_IMMUTABLE` — the code is embedded in every document number already issued |
 
 ## users module
 
 | Method & path | Roles | Request body | Response |
 |---|---|---|---|
 | `GET /users` | A, M | — | `200 { data: [User], meta }` |
-| `POST /users` | A | `{ username, fullName, phone?, role, password }` | `201 User` |
-| `PATCH /users/:id` | A | any of `{ fullName, phone, role, isActive }` | `200 User` |
+| `POST /users` | A | `{ username, fullName, phone?, role, password, branchIds, defaultBranchId? }` | `201 User` · `400 BRANCH_UNKNOWN` · `400 DEFAULT_BRANCH_NOT_ASSIGNED`. `branchIds` is **required** — an account with no branch cannot sign in |
+| `PATCH /users/:id` | A | any of `{ fullName, phone, role, isActive, branchIds, defaultBranchId }` | `200 User` — supplying `branchIds` replaces the assignment wholesale and revokes the user's refresh tokens, since their token still names the old branch |
 | `POST /users/:id/reset-password` | A | `{ newPassword }` | `204` |
 
 ## catalog module
@@ -58,6 +76,31 @@
 | `GET /adjustments` | M+ | `?status=` | `200 { data, meta }` |
 | `GET /inventory/movements` | M+ | `?productId=&from=&to=&type=` | `200 { data: [Movement], meta }` |
 
+All rows above are the active branch's only. `GET /inventory/stock` reads
+`v_stock_on_hand`, which carries one row per branch × product; in consolidated mode the
+branches are summed rather than listed separately.
+
+## transfers module (ADR-010)
+
+A transfer is **two one-sided operations**: the sender can only dispatch, the receiver can
+only receive. That mirrors the physical handover and means no transfer ever writes across
+a branch boundary. A branch sees only transfers it is a party to (`from` or `to`);
+anything else is `404`.
+
+| Method & path | Roles | Request body | Response |
+|---|---|---|---|
+| `GET /transfers` | I, P, M+ | `?status=` | `200 { data: [Transfer], meta }` — where this branch is sender or receiver |
+| `GET /transfers/in-transit` | M+ | — | `200 { rows, totalValue }` — dispatched but unreceived; still the **sender's** asset |
+| `GET /transfers/:id` | I, P, M+ | — | `200 Transfer` · `404` if this branch is not a party |
+| `POST /transfers` | I, M+ | `{ toBranchId, notes?, items: [{ sourceBatchId, qtyBase }] }` | `201 Transfer` (DRAFT) · `422 SAME_BRANCH` · `422 BATCH_UNKNOWN` (batch not active stock **at this branch**) · `422 INSUFFICIENT_STOCK` |
+| `POST /transfers/:id/dispatch` | I, M+ | — | `200 Transfer` (→ IN_TRANSIT). Sender only. Decrements source batches, writes `TRANSFER_OUT`, notifies the destination. Stock is re-checked here, not trusted from draft time · `422 TRANSFER_NOT_DRAFT` · `422 INSUFFICIENT_STOCK` |
+| `POST /transfers/:id/receive` | I, M+ | `{ items?: [{ itemId, qtyReceived }], notes? }` | `200 Transfer` (→ RECEIVED). Receiver only. Creates or tops up the destination batch carrying batch identity and unit cost across, writes `TRANSFER_IN`. Omitted quantities default to what was sent · `422 RECEIVED_EXCEEDS_SENT` · `422 TRANSFER_NOT_IN_TRANSIT` |
+| `POST /transfers/:id/cancel` | M+ | — | `200 Transfer` (→ CANCELLED). Drafts only — once goods are moving they must be received · `422 TRANSFER_NOT_DRAFT` |
+
+A short receipt is normal, not an error: only what arrived lands on the destination shelf,
+the shortfall stays visible on the transfer, and a `TRANSFER_SHORT_RECEIPT` notification
+goes to the sending branch. Nothing is written off silently.
+
 ## suppliers & purchasing modules
 
 | Method & path | Roles | Request body | Response |
@@ -71,6 +114,12 @@
 | `POST /goods-receipts` | I, M+ | `{ poId?, supplierId, items: [{productId, qtyBase, unitCost, batchNumber, expiryDate}], notes? }` | `201 GRN` — creates/updates batches + RECEIPT movements atomically · `422 OVER_RECEIPT` without Manager approval flag (US-09 AC2) |
 | `GET /goods-receipts` | I, M+ | `?poId=` | `200 { data, meta }` |
 
+An order is raised for the branch that will receive it, and the GRN must match:
+receiving against another branch's order returns `422 PO_BRANCH_MISMATCH`, otherwise the
+stock lands at the wrong shop and the order never reconciles. PO and GRN numbers are
+branch-prefixed (`KUM-PO-2026-0001`). `POST /purchase-orders/from-suggestions` drafts from
+this branch's low-stock list only.
+
 ## sales module (POS + offline sync)
 
 | Method & path | Roles | Request body | Response |
@@ -82,7 +131,17 @@
 | `GET /sales/:id/receipt` | as above | — | `200` print-ready payload (reprint flagged — US-07 AC2) |
 | `POST /sales/:id/void` | M+ | `{ reason }` | `200 Sale` (compensating movements, audited) |
 | `POST /returns` | C, P (approval P/M — US-14) | `{ saleId, items: [{saleItemId, qtyBase, restock}], reason, approverPin }` | `201 Return` |
-| `GET /catalog/snapshot` | any | `?since=` | `200 { products, units, barcodes, openBatches, version }` — offline cache feed |
+| `GET /catalog/snapshot` | any | `?since=` | `200 { products, units, barcodes, openBatches, version }` — offline cache feed, **scoped to the active branch**: `qtyOnHand` and `nearestExpiry` describe this shop's shelves only |
+
+Receipt numbers are branch-code prefixed (`KUM-RCP-2026-000123`) off a single global
+sequence, so they remain globally unique — which the offline dedupe relies on — while
+still reading as belonging to a shop. Lookup by the bare `RCP-…` portion still matches.
+
+`POST /sync/sales` accepts an optional `branchId` per queued sale, stamped at the till
+when the sale was taken. A sale whose branch does not match the token is **quarantined,
+not dropped** — the money was already taken — returning `status: "error"` with
+`BRANCH_MISMATCH` and raising a `SYNC_BRANCH_MISMATCH` notification for a manager. The
+client leaves it queued.
 
 ```jsonc
 // SaleCreate
@@ -116,13 +175,17 @@
 | `GET /reports/shrinkage?from=&to=` | M+ | `200 { rows }` |
 | `GET /reports/:name/export?format=csv\|pdf` | M+ | `200` file stream (US-13 AC3) |
 
+Every report is scoped to the active branch. An ADMIN holding a consolidated token
+(`POST /auth/switch-branch` with `branchId: null`) gets the same reports across all
+branches; stock valuation sums branches rather than listing a product once per shop.
+
 ## notifications, audit, settings
 
 | Method & path | Roles | Request/response |
 |---|---|---|
-| `GET /notifications` | M+, P | `200 { data: [{id, type, payload, seenAt}] }` |
+| `GET /notifications` | M+, P | `200 { data: [{id, type, branchId, payload, seenAt}] }` — this branch's plus system-wide (`branchId: null`) |
 | `POST /notifications/:id/seen` | M+, P | `204` |
-| `GET /audit-logs` | A, M | `?entity=&entityId=&userId=&from=&to=` → `200 { data, meta }` |
+| `GET /audit-logs` | A, M | `?entity=&entityId=&userId=&branchId=&from=&to=` → `200 { data, meta }` |
 | `GET /settings` / `PATCH /settings` | A | `{ key: value, … }` → `200` (each change audited) |
 | `GET /health` | public | `200 { status: "ok", db: "ok", version }` — uptime checks & Week 7 load test |
 
@@ -136,3 +199,32 @@
 - **Rate limits:** `/auth/login` 5/min/IP (US-01 AC2); global 100 req/min/user.
 - **Scheduled jobs:** nightly batch-status sweep (expired → `EXPIRED`, notify);
   15-min low-stock scan → notifications; Week 5 adds SMS digest via Africa's Talking.
+  Jobs run outside any request, so they have no branch context and sweep every branch;
+  low-stock dedupe is keyed on `(branch, product)` so a shortage at one shop does not
+  silence the same shortage at another.
+- **Branch enforcement (ADR-010):** a Prisma client extension over an `AsyncLocalStorage`
+  request context filters branch-scoped models automatically, so a forgotten `where`
+  clause cannot leak across shops. It cannot see raw SQL — the FEFO allocator and the
+  view-backed reports carry their branch predicate by hand, and
+  `test/branch-isolation.e2e-spec.ts` covers those paths.
+
+## Branch-related error codes
+
+| Code | Status | Meaning |
+|---|---|---|
+| `BRANCH_REQUIRED` | 422 | The action needs an active branch; the token is consolidated |
+| `BRANCH_FORBIDDEN` | 401 | The user is not assigned to the requested branch |
+| `CONSOLIDATED_FORBIDDEN` | 401 | Only ADMIN may view all branches at once |
+| `NO_BRANCH_ASSIGNED` | 401 | The account has no branch, so it cannot sign in |
+| `NO_BRANCH_CONFIGURED` | 401 | No active branch exists yet — create one first |
+| `BRANCH_UNKNOWN` | 400/422 | Branch or batch does not exist, or is not this branch's stock |
+| `BRANCH_CODE_TAKEN` | 400 | Another branch already uses that code |
+| `BRANCH_CODE_IMMUTABLE` | 400 | The code is embedded in issued document numbers |
+| `DEFAULT_BRANCH_NOT_ASSIGNED` | 400 | The sign-in branch must be one of the assigned branches |
+| `PO_BRANCH_MISMATCH` | 422 | Goods received against an order raised for another branch |
+| `SAME_BRANCH` | 422 | A transfer's source and destination must differ |
+| `TRANSFER_NOT_DRAFT` / `TRANSFER_NOT_IN_TRANSIT` | 422 | Wrong state for the requested step |
+| `RECEIVED_EXCEEDS_SENT` | 422 | Cannot receive more than was dispatched |
+
+Reading another branch's record returns `404`, not `403` — a branch is never told what
+another holds.

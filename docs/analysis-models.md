@@ -4,6 +4,14 @@
 models.** All diagrams are Mermaid (GitHub renders natively). IDs cross-reference the
 user stories (US-xx) in the Requirements Document.
 
+> **Multi-branch (ADR-010).** These models were drawn for a single shop. The client
+> subsequently disclosed several branches, so read every actor below as acting *within one
+> branch*: the branch is carried in the signed access token and every stock read, sale and
+> report is scoped to it. Stock moves between branches only through UC-16 (§9 class
+> diagram: `StockTransfer`), which is deliberately two-sided — the sending branch
+> dispatches, the receiving branch receives, and neither can perform the other's half.
+> The ERD in [database-design.md](week3/database-design.md) is the current one.
+
 ---
 
 ## 1. Use case diagram
@@ -57,6 +65,7 @@ graph LR
         UC9((Adjust stock))
         UC10b((Approve<br/>adjustment))
         UC15((Expiry / low-stock<br/>alerts))
+        UC16((Transfer stock<br/>between branches))
         UC12((Manage users<br/>& roles))
         UC13((Configure settings))
         UC14((Review audit log))
@@ -69,8 +78,10 @@ graph LR
     IO --> UC7
     IO --> UC8
     IO --> UC9
+    IO --> UC16
     PH2 --> UC7
     PH2 --> UC9
+    MG2 --> UC16
     MG2 --> UC10b
     MG2 --> UC15
     AD --> UC12
@@ -273,21 +284,30 @@ inventory`, `audit` subscribes to events from all, `reporting` reads views only.
 
 ```mermaid
 classDiagram
+    class Branch { +id +code +name +receiptHeader +isActive }
+    class UserBranch { +userId +branchId +isDefault }
     class User { +id +username +fullName +role: Role +isActive }
     class Product { +id +name +genericName +strength +form +baseUnit +sellingPriceBase +reorderLevel +vatApplies +prescriptionOnly +deletedAt }
     class ProductUnit { +id +unitName +factorToBase +sellingPrice +isActive }
-    class Batch { +id +batchNumber +expiryDate +qtyOnHand +unitCost +status +isSellable() bool }
+    class Batch { +id +branchId +batchNumber +expiryDate +qtyOnHand +unitCost +status +isSellable() bool }
     class StockMovement { +id +qtyDelta +type +refType +refId +createdAt }
-    class Sale { +id +clientSaleId +receiptNumber +subtotal +vatTotal +total +status +soldAt +syncedOffline }
+    class Sale { +id +branchId +clientSaleId +receiptNumber +subtotal +vatTotal +total +status +soldAt +syncedOffline }
     class SaleItem { +quantity +qtyBase +unitPrice +discount +lineTotal }
     class Payment { +method +amount +tendered +changeDue }
     class PurchaseOrder { +poNumber +status +expectedDate }
     class GoodsReceipt { +grnNumber +receivedAt }
     class StockAdjustment { +qtyDelta +reason +status }
+    class StockTransfer { +transferNumber +fromBranchId +toBranchId +status +dispatch() +receive() }
+    class StockTransferItem { +sourceBatchId +destBatchId +batchNumber +expiryDate +qtyBase +qtyReceived +unitCost }
     class UnitConverter { +toBase(unit, qty) int +breakdown(product, qtyBase) UnitQty[] }
-    class FefoAllocator { +allocate(product, qtyBase) BatchAllocation[] }
+    class FefoAllocator { +allocate(branch, product, qtyBase) BatchAllocation[] }
+    class BranchScope { +branchId +branchIds +requireBranch() uuid }
     class SyncService { +ingest(SaleCreate[]) SyncResult[] }
 
+    Branch "1" o-- "0..*" UserBranch
+    User "1" o-- "0..*" UserBranch
+    Branch "1" o-- "0..*" Batch
+    Branch "1" o-- "0..*" Sale
     Product "1" o-- "0..*" ProductUnit
     Product "1" o-- "0..*" Batch
     Batch "1" o-- "0..*" StockMovement
@@ -298,7 +318,11 @@ classDiagram
     PurchaseOrder "1" o-- "0..*" GoodsReceipt
     User "1" o-- "0..*" Sale : cashier
     StockAdjustment --> Batch
-    FefoAllocator ..> Batch : locks FOR UPDATE
+    StockTransfer "1" *-- "1..*" StockTransferItem
+    StockTransfer --> Branch : from / to
+    StockTransferItem --> Batch : source / destination
+    FefoAllocator ..> Batch : locks FOR UPDATE, within branch
+    FefoAllocator ..> BranchScope : reads active branch
     SyncService ..> Sale : idempotent create
     UnitConverter ..> ProductUnit
 ```

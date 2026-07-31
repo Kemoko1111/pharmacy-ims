@@ -43,6 +43,7 @@ export class JobsService {
       await this.prisma.notification.create({
         data: {
           id: uuid(),
+          branchId: batch.branchId,
           type: 'EXPIRED',
           payload: {
             batchId: batch.id,
@@ -78,6 +79,7 @@ export class JobsService {
       await this.prisma.notification.create({
         data: {
           id: uuid(),
+          branchId: batch.branchId,
           type: 'EXPIRY_90',
           payload: {
             batchId: batch.id,
@@ -105,9 +107,13 @@ export class JobsService {
 
   /** Every 15 min: low-stock scan; one open notification per product, no spam. */
   async lowStockScan(): Promise<{ notified: number }> {
+    // Runs outside any request, so there is no branch context and the view is
+    // read across all branches — one row per branch × product (ADR-010). The
+    // dedupe key is therefore (branch, product): a shortage at one shop must
+    // not silence the same shortage at another.
     const low = await this.prisma.$queryRaw<
-      { product_id: string; name: string; qty_base: bigint; reorder_level: number }[]
-    >`SELECT product_id, name, qty_base, reorder_level FROM v_low_stock`;
+      { branch_id: string; product_id: string; name: string; qty_base: bigint; reorder_level: number }[]
+    >`SELECT branch_id, product_id, name, qty_base, reorder_level FROM v_low_stock`;
 
     let notified = 0;
     for (const row of low) {
@@ -115,6 +121,7 @@ export class JobsService {
         where: {
           type: 'LOW_STOCK',
           seenAt: null,
+          branchId: row.branch_id,
           payload: { path: ['productId'], equals: row.product_id },
         },
       });
@@ -122,6 +129,7 @@ export class JobsService {
       await this.prisma.notification.create({
         data: {
           id: uuid(),
+          branchId: row.branch_id,
           type: 'LOW_STOCK',
           payload: {
             productId: row.product_id,

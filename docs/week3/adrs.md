@@ -248,3 +248,92 @@ credit; a stack the team has operated before; Neon branching gives free point-in
 restore on top of NFR-07 dumps. *Harder:* worst-case ~50 s cold start if the ping lapses
 (demo script: open the app two minutes early); CSP `connect-src` and `CORS_ORIGIN` must
 be re-pointed at the `onrender.com` URL, tracked in the OWASP checklist.
+
+---
+
+## ADR-010: Multi-branch — one database, branch as a stock-location dimension
+
+**Status:** Accepted
+
+**Context.** After the MVP was built, the client disclosed that the pharmacy operates
+from multiple shops rather than the single site assumed throughout Weeks 1–3. The system
+had not yet gone into live use, so no production data needed rescuing — but every table
+that records stock or money assumed one location.
+
+Three shapes were considered. *Database per branch* gives the strongest isolation but
+makes the consolidated reporting the owner actually wants (group sales, group stock
+value) a cross-database join, and triples the hosting footprint on a free tier.
+*Schema per branch* has the same reporting problem with worse migration ergonomics.
+*One database with a branch column* keeps reporting trivial and hosting flat, at the cost
+of isolation becoming an application concern rather than a physical one.
+
+The deciding factor is that this is one business with one product catalogue and one
+owner, not several tenants. Branches share products, prices, suppliers and customers;
+they differ only in what stock sits on their shelves and what was sold across their
+counters. That is a dimension, not a tenancy boundary.
+
+**Decision.** A single database. Tables split into two groups:
+
+| Group | Tables | Rationale |
+|---|---|---|
+| Branch-scoped (`branch_id NOT NULL`) | batches, stock_movements, stock_adjustments, sales, purchase_orders, goods_receipts | physical stock and the money taken against it |
+| Branch-tagged (`branch_id` nullable) | notifications, audit_logs | a null row is system-wide and visible everywhere |
+| Shared (no `branch_id`) | products, product_units, product_barcodes, categories, suppliers, customers, users, settings | one catalogue, one price list, one customer book |
+
+Supporting decisions:
+
+1. **Selling prices are global; reorder levels are not.** The client confirmed a product
+   costs the same at every shop, so no per-branch price table. Reorder levels genuinely
+   differ by shop size, so `branch_product_settings` carries an optional override that
+   falls back to `products.reorder_level`.
+2. **`role` stays global on `users`; reach comes from `user_branches`.** The client's
+   managers each run one shop, so a per-branch role matrix would be complexity bought for
+   nobody. A Manager is a Manager, and `user_branches` decides where.
+3. **Branch travels in the signed JWT, not a header.** A till is physically at one shop
+   for a whole shift, and a client-supplied `X-Branch-Id` would be one missed validation
+   away from a cross-branch write. Switching branch is therefore a round-trip
+   (`POST /auth/switch-branch`) that re-issues the access token.
+4. **Isolation is enforced centrally by a Prisma client extension**, driven by an
+   `AsyncLocalStorage` request context, rather than by a `where` clause remembered at
+   ~60 call sites. Reads are auto-scoped; writes stay explicit (the generated types make
+   `branchId` mandatory) and the extension validates them.
+5. **Document numbers are branch-prefixed off the existing global sequences** —
+   `KUM-RCP-2026-000123`. Receipt numbers stay globally unique, which the offline sync
+   dedupe depends on, while still reading as belonging to a shop.
+6. **`batches` is unique on `(branch_id, product_id, batch_number, expiry_date)`.** The
+   same supplier batch legitimately arrives at two shops; the old global constraint would
+   have rejected the second delivery.
+
+**Consequences.** *Easier:* consolidated reporting is one `GROUP BY`; hosting is
+unchanged; the shared catalogue means a product added once appears everywhere;
+branch-prefixed indexes make per-branch queries touch a smaller working set than the
+single-branch design did.
+
+*Harder:* isolation is now a property of application code rather than physics. Two
+residual risks are accepted rather than solved:
+
+- **Raw SQL is invisible to the extension.** Eighteen `$queryRaw` sites exist, the FEFO
+  allocator among them; each carries its branch predicate by hand and
+  `test/branch-isolation.e2e-spec.ts` covers the paths that matter. Postgres RLS would
+  close the hole completely but requires wrapping every scoped read in an interactive
+  transaction to hold `SET LOCAL` across a pooled Neon connection — rejected as
+  disproportionate for a known, small raw-SQL surface. Revisit if the business ever
+  splits into genuinely separate owners.
+- **Offline queue vs. branch switch.** A sale queued at one branch whose operator then
+  switches branch before the queue drains cannot simply be rejected — the money was taken
+  at the till. Queued sales carry their originating `branchId` and mismatches are
+  quarantined for a manager, the same shape as the existing `NEG_STOCK_EXCEPTION`
+  handling (ADR-006).
+
+Two further points are policy, not defects, and are recorded here so the reports are read
+correctly.
+
+**In-transit stock** on a branch transfer is split deliberately: on dispatch the goods
+leave the sending branch's *sellable* shelf immediately, so they can never be sold twice,
+but they remain the sending branch's *asset* until the far end confirms receipt. The gap
+is exposed by `v_in_transit` rather than left implicit, so it is neither double-counted
+nor invisible. A transfer is therefore two one-sided operations — dispatch touches only
+the sender, receipt only the receiver — which is both what physically happens and the
+reason no transfer ever needs to write across a branch boundary.
+
+**Branch-accurate history begins at go-live**, since no pre-existing data was migrated.

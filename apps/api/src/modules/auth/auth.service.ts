@@ -25,12 +25,70 @@ export class AuthService {
     return createHash('sha256').update(value).digest('hex');
   }
 
-  private async issueTokens(user: { id: string; username: string; role: string; fullName: string }, deviceLabel?: string) {
-    const accessToken = await this.jwt.signAsync({
+  /**
+   * Which branches an actor may work in, and which one to start in (ADR-010).
+   * ADMIN reaches every active branch; everyone else is limited to their
+   * user_branches rows. The active branch is the one flagged `is_default`,
+   * falling back to the first assigned.
+   */
+  private async resolveBranches(user: { id: string; role: string }) {
+    const memberships = await this.prisma.userBranch.findMany({
+      where: { userId: user.id, branch: { isActive: true } },
+      include: { branch: { select: { id: true, code: true, name: true } } },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+    });
+
+    if (user.role === 'ADMIN') {
+      const all = await this.prisma.branch.findMany({
+        where: { isActive: true },
+        select: { id: true, code: true, name: true },
+        orderBy: { code: 'asc' },
+      });
+      if (all.length === 0) {
+        throw new UnauthorizedException({
+          code: 'NO_BRANCH_CONFIGURED',
+          message: 'No active branch exists — create one first',
+        });
+      }
+      const preferred = memberships[0]?.branch ?? all[0];
+      return { branches: all, activeBranch: preferred };
+    }
+
+    if (memberships.length === 0) {
+      throw new UnauthorizedException({
+        code: 'NO_BRANCH_ASSIGNED',
+        message: 'Your account is not assigned to a branch. Ask an administrator.',
+      });
+    }
+
+    return {
+      branches: memberships.map((m) => m.branch),
+      activeBranch: memberships[0].branch,
+    };
+  }
+
+  /** Signs an access token bound to a specific branch. */
+  private signAccessToken(
+    user: { id: string; username: string; role: string },
+    branchId: string | null,
+    branchIds: string[],
+  ) {
+    return this.jwt.signAsync({
       sub: user.id,
       username: user.username,
       role: user.role,
+      branch: branchId,
+      branches: branchIds,
     });
+  }
+
+  private async issueTokens(
+    user: { id: string; username: string; role: string; fullName: string },
+    deviceLabel?: string,
+  ) {
+    const { branches, activeBranch } = await this.resolveBranches(user);
+    const branchIds = branches.map((b) => b.id);
+    const accessToken = await this.signAccessToken(user, activeBranch.id, branchIds);
 
     const refreshToken = randomBytes(48).toString('base64url');
     const ttlHours = Number(process.env.JWT_REFRESH_TTL_HOURS ?? 12);
@@ -47,7 +105,60 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role },
+      user: {
+        id: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        role: user.role,
+        activeBranch,
+        branches,
+      },
+    };
+  }
+
+  /**
+   * Re-issues the access token against a different branch (ADR-010). The token
+   * is the only thing that carries branch, so switching must round-trip — the
+   * client cannot simply assert a new branch in a header.
+   *
+   * `branchId: null` is consolidated all-branch mode: ADMIN reporting only,
+   * and the Prisma extension refuses writes while it is active.
+   */
+  async switchBranch(userId: string, branchId: string | null) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.isActive) {
+      throw new UnauthorizedException({ code: 'USER_INACTIVE', message: 'Account is disabled' });
+    }
+
+    const { branches } = await this.resolveBranches(user);
+    const branchIds = branches.map((b) => b.id);
+
+    if (branchId === null) {
+      if (user.role !== 'ADMIN') {
+        throw new UnauthorizedException({
+          code: 'CONSOLIDATED_FORBIDDEN',
+          message: 'Only an administrator can view all branches at once',
+        });
+      }
+    } else if (!branchIds.includes(branchId)) {
+      throw new UnauthorizedException({
+        code: 'BRANCH_FORBIDDEN',
+        message: 'You are not assigned to that branch',
+      });
+    }
+
+    await this.audit.log({
+      userId,
+      action: 'auth.switch_branch',
+      entity: 'user',
+      entityId: userId,
+      after: { branchId },
+    });
+
+    return {
+      accessToken: await this.signAccessToken(user, branchId, branchIds),
+      activeBranch: branchId ? branches.find((b) => b.id === branchId)! : null,
+      branches,
     };
   }
 
@@ -169,8 +280,16 @@ export class AuthService {
     });
   }
 
-  async me(userId: string) {
+  async me(userId: string, activeBranchId: string | null) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    return { id: user.id, username: user.username, fullName: user.fullName, role: user.role };
+    const { branches } = await this.resolveBranches(user);
+    return {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      role: user.role,
+      activeBranch: activeBranchId ? (branches.find((b) => b.id === activeBranchId) ?? null) : null,
+      branches,
+    };
   }
 }

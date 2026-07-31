@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import type { AuthUser, LoginResponse } from '@pharmatrack/shared';
+import type { AuthUser, LoginResponse, SwitchBranchResponse } from '@pharmatrack/shared';
 import { ApiError, api, tokenStore } from './api';
+import { setActiveBranch } from './offline';
 
 interface AuthCtx {
   user: AuthUser | null;
@@ -8,6 +9,8 @@ interface AuthCtx {
   waking: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Re-issues the token against another branch (ADR-010). */
+  switchBranch: (branchId: string | null) => Promise<void>;
 }
 
 // Cold-start handling for the free-tier API (Risk R6): if /auth/me is slow to
@@ -27,6 +30,15 @@ const SESSION_TTL_MS = 12 * 3600_000;
 
 function cacheSession(user: AuthUser) {
   localStorage.setItem(SESSION_KEY, JSON.stringify({ user, verifiedAt: Date.now() }));
+}
+
+/**
+ * Keeps the offline layer pointed at the same branch as the session. The
+ * cached catalogue carries per-branch stock, so this must happen on every path
+ * that establishes or changes a session — login, restore, /auth/me, switch.
+ */
+function adoptSession(user: AuthUser | null) {
+  setActiveBranch(user?.activeBranch?.id ?? null);
 }
 
 function restoreSession(): AuthUser | null {
@@ -62,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const graceTimer = setTimeout(() => {
         if (cancelled) return;
         if (cached) {
+          adoptSession(cached);
           setUser(cached);
           setReady(true);
         } else {
@@ -77,15 +90,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const me = await api<AuthUser>('/auth/me', { signal: controller.signal });
         if (cancelled) return;
         cacheSession(me);
+        adoptSession(me);
         setUser(me);
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError) {
           // server said no — session is genuinely dead; override any cached fallback
           localStorage.removeItem(SESSION_KEY);
+          adoptSession(null);
           setUser(null);
         } else if (!cached) {
           // network/cold failure and nothing cached — stay logged out
+          adoptSession(null);
           setUser(null);
         }
         // network failure WITH a cached session: the grace timer already adopted it
@@ -101,6 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const onLogout = () => {
       localStorage.removeItem(SESSION_KEY);
+      adoptSession(null);
       setUser(null);
     };
     window.addEventListener('pt-logout', onLogout);
@@ -117,18 +134,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     tokenStore.set(res);
     cacheSession(res.user);
+    adoptSession(res.user);
     setUser(res.user);
+  }, []);
+
+  /**
+   * Branch lives in the signed token, so switching is a round-trip rather than
+   * a client-side flag (ADR-010). The offline catalogue is re-pointed first so
+   * no POS read can serve the previous branch's stock in between.
+   */
+  const switchBranch = useCallback(async (branchId: string | null) => {
+    const res = await api<SwitchBranchResponse>('/auth/switch-branch', {
+      method: 'POST',
+      body: { branchId },
+    });
+    tokenStore.setAccess(res.accessToken);
+    setActiveBranch(res.activeBranch?.id ?? null);
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, activeBranch: res.activeBranch, branches: res.branches };
+      cacheSession(next);
+      return next;
+    });
   }, []);
 
   const logout = useCallback(async () => {
     const refreshToken = tokenStore.refresh;
     tokenStore.clear();
     localStorage.removeItem(SESSION_KEY);
+    adoptSession(null);
     setUser(null);
     if (refreshToken) {
       await api('/auth/logout', { method: 'POST', body: { refreshToken }, retry: false }).catch(() => {});
     }
   }, []);
 
-  return <Ctx.Provider value={{ user, ready, waking, login, logout }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ user, ready, waking, login, logout, switchBranch }}>
+      {children}
+    </Ctx.Provider>
+  );
 }

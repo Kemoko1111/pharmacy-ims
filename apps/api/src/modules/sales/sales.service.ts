@@ -37,6 +37,7 @@ const saleInclude = {
   },
   payments: true,
   cashier: { select: { fullName: true } },
+  branch: { select: { code: true } },
 } satisfies Prisma.SaleInclude;
 
 @Injectable()
@@ -55,6 +56,8 @@ export class SalesService {
    * negative, and raises a NEG_STOCK_EXCEPTION notification instead of failing.
    */
   async createSale(dto: SaleCreateDto, actor: RequestUser, offline = false): Promise<CreateSaleResult> {
+    const branchId = this.actorBranch(actor);
+
     const existing = await this.prisma.sale.findUnique({ where: { clientSaleId: dto.clientSaleId } });
     if (existing) {
       return { sale: await this.getSale(existing.id, actor), duplicate: true };
@@ -155,10 +158,13 @@ export class SalesService {
 
       const available = new Map<string, LockedBatch[]>();
       for (const productId of demand.keys()) {
+        // Raw SQL is invisible to the branch-scope extension — the branch_id
+        // predicate here is what stops one till selling another branch's stock.
         const batches = await tx.$queryRaw<LockedBatch[]>`
           SELECT id, qty_on_hand, unit_cost, expiry_date
           FROM batches
-          WHERE product_id = ${productId}::uuid
+          WHERE branch_id = ${branchId}::uuid
+            AND product_id = ${productId}::uuid
             AND status = 'ACTIVE'
             AND expiry_date > CURRENT_DATE
             AND qty_on_hand > 0
@@ -184,6 +190,7 @@ export class SalesService {
             // Distinguish "it's all expired" from "there just isn't enough"
             const expiredStock = await tx.batch.count({
               where: {
+                branchId,
                 productId: line.product.id,
                 qtyOnHand: { gt: 0 },
                 OR: [{ status: 'EXPIRED' }, { expiryDate: { lte: new Date() } }],
@@ -207,7 +214,7 @@ export class SalesService {
             line.allocations[line.allocations.length - 1]?.batchId ??
             (
               await tx.batch.findFirst({
-                where: { productId: line.product.id },
+                where: { branchId, productId: line.product.id },
                 orderBy: { createdAt: 'desc' },
                 select: { id: true },
               })
@@ -224,6 +231,7 @@ export class SalesService {
           await tx.notification.create({
             data: {
               id: uuid(),
+              branchId,
               type: 'NEG_STOCK_EXCEPTION',
               payload: {
                 productId: line.product.id,
@@ -237,14 +245,22 @@ export class SalesService {
       }
 
       // ── Receipt number ────────────────────────────────────────────────────
+      // One global sequence, branch-code prefixed (ADR-010): receipt numbers
+      // stay globally unique — which the offline dedupe relies on — while
+      // still reading as belonging to a branch.
+      const branch = await tx.branch.findUniqueOrThrow({
+        where: { id: branchId },
+        select: { code: true },
+      });
       const [{ nextval }] = await tx.$queryRaw<{ nextval: bigint }[]>`SELECT nextval('receipt_number_seq')`;
-      const receiptNumber = `RCP-${new Date().getFullYear()}-${String(nextval).padStart(6, '0')}`;
+      const receiptNumber = `${branch.code}-RCP-${new Date().getFullYear()}-${String(nextval).padStart(6, '0')}`;
 
       // ── Persist sale, items, movements, batch totals, payments ───────────
       const saleId = uuid();
       await tx.sale.create({
         data: {
           id: saleId,
+          branchId,
           clientSaleId: dto.clientSaleId,
           receiptNumber,
           cashierId: actor.id,
@@ -282,6 +298,7 @@ export class SalesService {
 
           await tx.stockMovement.create({
             data: {
+              branchId,
               productId: line.product.id,
               batchId: alloc.batchId,
               qtyDelta: -alloc.qty,
@@ -341,6 +358,29 @@ export class SalesService {
   async syncSales(sales: SaleCreateDto[], actor: RequestUser) {
     const results = [];
     for (const s of sales) {
+      // A sale queued at one branch must never post against another (ADR-010).
+      // The till already took the money, so this is quarantined for a manager,
+      // not dropped — the client leaves it queued on a non-ok status.
+      if (s.branchId && s.branchId !== actor.branchId) {
+        await this.prisma.notification.create({
+          data: {
+            id: uuid(),
+            branchId: s.branchId,
+            type: 'SYNC_BRANCH_MISMATCH',
+            payload: {
+              clientSaleId: s.clientSaleId,
+              queuedAtBranch: s.branchId,
+              postedFromBranch: actor.branchId,
+            },
+          },
+        });
+        results.push({
+          clientSaleId: s.clientSaleId,
+          status: 'error' as const,
+          error: 'BRANCH_MISMATCH: sale was taken at a different branch',
+        });
+        continue;
+      }
       try {
         const { sale, duplicate } = await this.createSale(s, actor, true);
         results.push({
@@ -431,6 +471,7 @@ export class SalesService {
       for (const item of sale.items) {
         await tx.stockMovement.create({
           data: {
+            branchId: sale.branchId,
             productId: item.productId,
             batchId: item.batchId,
             qtyDelta: item.qtyBase,
@@ -470,7 +511,26 @@ export class SalesService {
     return Number.isFinite(rate) && rate >= 0 ? rate : 0;
   }
 
-  private assertCanView(sale: { cashierId: string; soldAt: Date }, actor: RequestUser) {
+  /**
+   * A sale is always taken at one till in one branch, so consolidated
+   * (all-branch) mode cannot ring one up.
+   */
+  private actorBranch(actor: RequestUser): string {
+    if (!actor.branchId) {
+      throw new DomainException(
+        'BRANCH_REQUIRED',
+        'Select a branch before taking a sale',
+      );
+    }
+    return actor.branchId;
+  }
+
+  private assertCanView(sale: { cashierId: string; soldAt: Date; branchId: string }, actor: RequestUser) {
+    // Branch first: a Manager at one branch has no business reading another's
+    // sales, whatever their role allows locally.
+    if (actor.branchId && sale.branchId !== actor.branchId) {
+      throw new NotFoundException({ code: 'NOT_FOUND', message: 'Sale not found' });
+    }
     if (actor.role !== 'CASHIER') return;
     const dayStart = new Date();
     dayStart.setHours(0, 0, 0, 0);
@@ -482,6 +542,9 @@ export class SalesService {
   private serialize(sale: Prisma.SaleGetPayload<{ include: typeof saleInclude }>) {
     return {
       id: sale.id,
+      // Only distinguishing in consolidated mode, where rows span shops.
+      branchId: sale.branchId,
+      branchCode: sale.branch.code,
       clientSaleId: sale.clientSaleId,
       receiptNumber: sale.receiptNumber,
       cashierId: sale.cashierId,

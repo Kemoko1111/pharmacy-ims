@@ -3,7 +3,15 @@ import request from 'supertest';
 import { Prisma } from '@prisma/client';
 import { v7 as uuid } from 'uuid';
 import { JobsService } from '../src/modules/notifications/jobs.service';
-import { authHeader, createTestApp, createUser, prisma, resetDb, seedCatalog } from './helpers';
+import {
+  authHeader,
+  createTestApp,
+  createUser,
+  prisma,
+  resetDb,
+  seedCatalog,
+  testBranch,
+} from './helpers';
 
 describe('Adjustments, quarantine, scheduled sweeps (US-12, BR-05)', () => {
   let app: INestApplication;
@@ -98,6 +106,7 @@ describe('Adjustments, quarantine, scheduled sweeps (US-12, BR-05)', () => {
     await prisma.batch.create({
       data: {
         id: expiredBatchId,
+        branchId: testBranch.primaryId,
         productId: fix.productId,
         batchNumber: 'EXP-BULK',
         expiryDate: new Date(Date.now() - 86_400_000),
@@ -143,6 +152,7 @@ describe('Adjustments, quarantine, scheduled sweeps (US-12, BR-05)', () => {
     await prisma.batch.create({
       data: {
         id: dying,
+        branchId: testBranch.primaryId,
         productId: fix.productId,
         batchNumber: 'SWEEP-ME',
         expiryDate: new Date(Date.now() - 3600_000),

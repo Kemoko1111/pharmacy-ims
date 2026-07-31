@@ -56,6 +56,8 @@ enum MovementType {
   RETURN_IN
   ADJUSTMENT
   DISPOSAL
+  TRANSFER_OUT
+  TRANSFER_IN
 
   @@map("movement_type")
 }
@@ -105,7 +107,60 @@ enum AdjustmentStatus {
   @@map("adjustment_status")
 }
 
-// ── People & access ──────────────────────────────────────────────────────────
+enum TransferStatus {
+  DRAFT
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+
+  @@map("transfer_status")
+}
+
+// ── Branches, people & access ────────────────────────────────────────────────
+
+/// A physical shop. `branch` is a stock-location dimension, not a tenancy
+/// boundary — one DB, one catalogue, per-branch stock (ADR-010).
+model Branch {
+  id            String   @id @db.Uuid
+  code          String   @unique /// 'KUM' — prefixes RCP/PO/GRN numbers
+  name          String
+  address       String?
+  phone         String?
+  receiptHeader Json?    @map("receipt_header") /// falls back to settings.receipt_header
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members          UserBranch[]
+  productSettings  BranchProductSetting[]
+  batches          Batch[]
+  stockMovements   StockMovement[]
+  adjustments      StockAdjustment[]
+  sales            Sale[]
+  purchaseOrders   PurchaseOrder[]
+  goodsReceipts    GoodsReceipt[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  transfersOut     StockTransfer[]       @relation("TransferFrom")
+  transfersIn      StockTransfer[]       @relation("TransferTo")
+
+  @@map("branches")
+}
+
+/// Which branches a user may act in. Role stays global on `users`; this table
+/// decides reach. ADMIN bypasses it for consolidated reads only.
+model UserBranch {
+  userId    String   @map("user_id") @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  isDefault Boolean  @default(false) @map("is_default") /// pre-selected at login
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+  @@map("user_branches")
+}
 
 model User {
   id           String    @id @db.Uuid
@@ -124,6 +179,7 @@ model User {
   creator        User?          @relation("UserCreatedBy", fields: [createdBy], references: [id])
   createdUsers   User[]         @relation("UserCreatedBy")
   refreshTokens  RefreshToken[]
+  branches       UserBranch[]
   sales          Sale[]
   stockMovements StockMovement[]
 
@@ -181,13 +237,31 @@ model Product {
   barcodes       ProductBarcode[]
   priceHistory   PriceHistory[]
   batches        Batch[]
+  branchSettings BranchProductSetting[]
   saleItems      SaleItem[]
   stockMovements StockMovement[]
   adjustments    StockAdjustment[]
   poItems        PurchaseOrderItem[]
   receiptItems   GoodsReceiptItem[]
+  transferItems  StockTransferItem[]
 
   @@map("products")
+}
+
+/// Prices are shared across branches; reorder levels are not — the main shop
+/// reorders at 500, the kiosk at 50. Absent row ⇒ fall back to Product.
+model BranchProductSetting {
+  branchId     String   @map("branch_id") @db.Uuid
+  productId    String   @map("product_id") @db.Uuid
+  reorderLevel Int      @map("reorder_level")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy    String?  @map("updated_by") @db.Uuid
+
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([branchId, productId])
+  @@map("branch_product_settings")
 }
 
 model ProductUnit {
@@ -258,7 +332,8 @@ model Supplier {
 
 model PurchaseOrder {
   id           String    @id @db.Uuid
-  poNumber     String    @unique @map("po_number")
+  poNumber     String    @unique @map("po_number") /// 'KUM-PO-2026-0001'
+  branchId     String    @map("branch_id") @db.Uuid /// destination; the GRN must match
   supplierId   String    @map("supplier_id") @db.Uuid
   status       PoStatus  @default(DRAFT)
   expectedDate DateTime? @map("expected_date") @db.Date
@@ -267,10 +342,12 @@ model PurchaseOrder {
   updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy    String    @map("created_by") @db.Uuid
 
+  branch   Branch              @relation(fields: [branchId], references: [id])
   supplier Supplier            @relation(fields: [supplierId], references: [id])
   items    PurchaseOrderItem[]
   receipts GoodsReceipt[]
 
+  @@index([branchId, createdAt(sort: Desc)], map: "ix_po_branch")
   @@map("purchase_orders")
 }
 
@@ -291,17 +368,20 @@ model PurchaseOrderItem {
 
 model GoodsReceipt {
   id         String   @id @db.Uuid
-  grnNumber  String   @unique @map("grn_number")
+  grnNumber  String   @unique @map("grn_number") /// 'KUM-GRN-2026-0001'
+  branchId   String   @map("branch_id") @db.Uuid /// receiving branch; enforced = po.branchId
   poId       String?  @map("po_id") @db.Uuid
   supplierId String   @map("supplier_id") @db.Uuid
   receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
   receivedBy String   @map("received_by") @db.Uuid
   notes      String?
 
+  branch   Branch             @relation(fields: [branchId], references: [id])
   po       PurchaseOrder?     @relation(fields: [poId], references: [id])
   supplier Supplier           @relation(fields: [supplierId], references: [id])
   items    GoodsReceiptItem[]
 
+  @@index([branchId, receivedAt(sort: Desc)], map: "ix_grn_branch")
   @@map("goods_receipts")
 }
 
@@ -324,6 +404,7 @@ model GoodsReceiptItem {
 
 model Batch {
   id          String      @id @db.Uuid
+  branchId    String      @map("branch_id") @db.Uuid
   productId   String      @map("product_id") @db.Uuid
   batchNumber String      @map("batch_number")
   expiryDate  DateTime    @map("expiry_date") @db.Date
@@ -333,18 +414,23 @@ model Batch {
   createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  branch         Branch             @relation(fields: [branchId], references: [id])
   product        Product            @relation(fields: [productId], references: [id])
   saleItems      SaleItem[]
   stockMovements StockMovement[]
   adjustments    StockAdjustment[]
   receiptItems   GoodsReceiptItem[]
+  transferSource StockTransferItem[] @relation("TransferSource")
+  transferDest   StockTransferItem[] @relation("TransferDest")
 
-  @@unique([productId, batchNumber, expiryDate])
+  // Branch-scoped: the same supplier batch legitimately lands at two branches.
+  @@unique([branchId, productId, batchNumber, expiryDate])
   @@map("batches")
 }
 
 model StockAdjustment {
   id          String           @id @db.Uuid
+  branchId    String           @map("branch_id") @db.Uuid
   productId   String           @map("product_id") @db.Uuid
   batchId     String           @map("batch_id") @db.Uuid
   qtyDelta    Int              @map("qty_delta")
@@ -352,18 +438,74 @@ model StockAdjustment {
   note        String?
   status      AdjustmentStatus @default(PENDING_APPROVAL)
   requestedBy String           @map("requested_by") @db.Uuid
-  approvedBy  String?          @map("approved_by") @db.Uuid
+  approvedBy  String?          @map("approved_by") @db.Uuid /// must be a Manager of this branch
   decidedAt   DateTime?        @map("decided_at") @db.Timestamptz(6)
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  branch  Branch  @relation(fields: [branchId], references: [id])
   product Product @relation(fields: [productId], references: [id])
   batch   Batch   @relation(fields: [batchId], references: [id])
 
+  @@index([branchId, createdAt(sort: Desc)], map: "ix_adj_branch")
   @@map("stock_adjustments")
+}
+
+/// Movement of stock between two branches (ADR-010).
+///
+/// Not in the branch-scope extension's strict list: it belongs to two branches
+/// at once, so visibility is `from OR to` and is applied in the service. Each
+/// half is written by staff at that end, so no cross-branch write is needed.
+model StockTransfer {
+  id             String         @id @db.Uuid
+  transferNumber String         @unique @map("transfer_number") /// 'ACC-TRF-2026-0001'
+  fromBranchId   String         @map("from_branch_id") @db.Uuid
+  toBranchId     String         @map("to_branch_id") @db.Uuid
+  status         TransferStatus @default(DRAFT)
+  notes          String?
+  createdBy      String         @map("created_by") @db.Uuid
+  dispatchedBy   String?        @map("dispatched_by") @db.Uuid
+  dispatchedAt   DateTime?      @map("dispatched_at") @db.Timestamptz(6)
+  receivedBy     String?        @map("received_by") @db.Uuid
+  receivedAt     DateTime?      @map("received_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  fromBranch Branch              @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranch   Branch              @relation("TransferTo", fields: [toBranchId], references: [id])
+  items      StockTransferItem[]
+
+  @@index([fromBranchId, createdAt(sort: Desc)], map: "ix_transfer_from")
+  @@index([toBranchId, createdAt(sort: Desc)], map: "ix_transfer_to")
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id            String  @id @db.Uuid
+  transferId    String  @map("transfer_id") @db.Uuid
+  productId     String  @map("product_id") @db.Uuid
+  sourceBatchId String  @map("source_batch_id") @db.Uuid
+  destBatchId   String? @map("dest_batch_id") @db.Uuid /// created or topped up on receipt
+  /// Denormalised at dispatch — the receiving branch cannot read the source
+  /// branch's batch row, and the document should record what was sent.
+  batchNumber   String   @map("batch_number")
+  expiryDate    DateTime @map("expiry_date") @db.Date
+  qtyBase       Int     @map("qty_base")
+  qtyReceived   Int     @default(0) @map("qty_received")
+  unitCost      Decimal @default(0) @map("unit_cost") @db.Decimal(12, 4)
+
+  transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product     Product       @relation(fields: [productId], references: [id])
+  sourceBatch Batch         @relation("TransferSource", fields: [sourceBatchId], references: [id])
+  destBatch   Batch?        @relation("TransferDest", fields: [destBatchId], references: [id])
+
+  @@unique([transferId, sourceBatchId])
+  @@index([transferId], map: "ix_transfer_items_transfer")
+  @@map("stock_transfer_items")
 }
 
 model StockMovement {
   id          BigInt       @id @default(autoincrement())
+  branchId    String       @map("branch_id") @db.Uuid
   productId   String       @map("product_id") @db.Uuid
   batchId     String       @map("batch_id") @db.Uuid
   qtyDelta    Int          @map("qty_delta")
@@ -374,11 +516,12 @@ model StockMovement {
   performedBy String       @map("performed_by") @db.Uuid
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  branch    Branch  @relation(fields: [branchId], references: [id])
   product   Product @relation(fields: [productId], references: [id])
   batch     Batch   @relation(fields: [batchId], references: [id])
   performer User    @relation(fields: [performedBy], references: [id])
 
-  @@index([productId, createdAt(sort: Desc)], map: "ix_mov_product")
+  @@index([branchId, productId, createdAt(sort: Desc)], map: "ix_mov_product")
   @@index([refType, refId], map: "ix_mov_ref")
   @@map("stock_movements")
 }
@@ -401,8 +544,9 @@ model Customer {
 
 model Sale {
   id            String     @id @db.Uuid
+  branchId      String     @map("branch_id") @db.Uuid
   clientSaleId  String     @unique @map("client_sale_id") @db.Uuid
-  receiptNumber String     @unique @map("receipt_number")
+  receiptNumber String     @unique @map("receipt_number") /// 'KUM-RCP-2026-000123'
   cashierId     String     @map("cashier_id") @db.Uuid
   customerId    String?    @map("customer_id") @db.Uuid
   subtotal      Decimal    @db.Decimal(12, 2)
@@ -414,14 +558,15 @@ model Sale {
   soldAt        DateTime   @map("sold_at") @db.Timestamptz(6)
   createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  branch   Branch       @relation(fields: [branchId], references: [id])
   cashier  User         @relation(fields: [cashierId], references: [id])
   customer Customer?    @relation(fields: [customerId], references: [id])
   items    SaleItem[]
   payments Payment[]
   returns  SaleReturn[]
 
-  @@index([soldAt(sort: Desc)], map: "ix_sales_sold_at")
-  @@index([cashierId, soldAt(sort: Desc)], map: "ix_sales_cashier")
+  @@index([branchId, soldAt(sort: Desc)], map: "ix_sales_sold_at")
+  @@index([branchId, cashierId, soldAt(sort: Desc)], map: "ix_sales_cashier")
   @@map("sales")
 }
 
@@ -497,6 +642,7 @@ model SaleReturnItem {
 model AuditLog {
   id        BigInt   @id @default(autoincrement())
   userId    String?  @map("user_id") @db.Uuid
+  branchId  String?  @map("branch_id") @db.Uuid /// null ⇒ global action, no branch
   action    String
   entity    String
   entityId  String   @map("entity_id")
@@ -505,7 +651,10 @@ model AuditLog {
   ipAddress String?  @map("ip_address") @db.Inet
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  branch Branch? @relation(fields: [branchId], references: [id])
+
   @@index([entity, entityId, createdAt(sort: Desc)], map: "ix_audit_entity")
+  @@index([branchId, createdAt(sort: Desc)], map: "ix_audit_branch")
   @@map("audit_logs")
 }
 
@@ -520,10 +669,13 @@ model Setting {
 
 model Notification {
   id        String    @id @db.Uuid
+  branchId  String?   @map("branch_id") @db.Uuid /// null ⇒ system-wide
   type      String
   payload   Json
   seenAt    DateTime? @map("seen_at") @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  branch Branch? @relation(fields: [branchId], references: [id])
 
   @@map("notifications")
 }

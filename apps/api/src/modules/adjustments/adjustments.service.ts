@@ -49,6 +49,10 @@ export class AdjustmentsService {
       await tx.stockAdjustment.create({
         data: {
           id,
+          // The batch lookup above is branch-scoped, so this is always the
+          // actor's own branch — taking it from the batch keeps the
+          // adjustment and the stock it moves on the same branch by construction.
+          branchId: batch.branchId,
           productId: dto.productId,
           batchId: dto.batchId,
           qtyDelta: dto.qtyDelta,
@@ -60,7 +64,7 @@ export class AdjustmentsService {
         },
       });
       if (autoApprove) {
-        await this.postMovement(tx, id, dto, batch.unitCost, actor.id);
+        await this.postMovement(tx, id, { ...dto, branchId: batch.branchId }, batch.unitCost, actor.id);
       }
     });
 
@@ -101,7 +105,13 @@ export class AdjustmentsService {
         await this.postMovement(
           tx,
           id,
-          { productId: adj.productId, batchId: adj.batchId, qtyDelta: adj.qtyDelta, reason: adj.reason },
+          {
+            branchId: adj.branchId,
+            productId: adj.productId,
+            batchId: adj.batchId,
+            qtyDelta: adj.qtyDelta,
+            reason: adj.reason,
+          },
           adj.batch.unitCost,
           actor.id,
         );
@@ -137,6 +147,7 @@ export class AdjustmentsService {
       const adj = await this.prisma.stockAdjustment.create({
         data: {
           id: uuid(),
+          branchId: batch.branchId,
           productId: batch.productId,
           batchId: batch.id,
           qtyDelta: -batch.qtyOnHand,
@@ -185,12 +196,13 @@ export class AdjustmentsService {
   private async postMovement(
     tx: Prisma.TransactionClient,
     adjustmentId: string,
-    dto: { productId: string; batchId: string; qtyDelta: number; reason: AdjustmentReason },
+    dto: { branchId: string; productId: string; batchId: string; qtyDelta: number; reason: AdjustmentReason },
     unitCost: Prisma.Decimal,
     actorId: string,
   ) {
     await tx.stockMovement.create({
       data: {
+        branchId: dto.branchId,
         productId: dto.productId,
         batchId: dto.batchId,
         qtyDelta: dto.qtyDelta,

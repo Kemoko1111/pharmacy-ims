@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { USER_ROLES, UserRole } from '@pharmatrack/shared';
+import { Branch, USER_ROLES, UserRole } from '@pharmatrack/shared';
 import { api, ApiError } from '../lib/api';
 import { shortDate } from '../lib/format';
 
@@ -12,6 +12,9 @@ interface UserRow {
   role: UserRole;
   isActive: boolean;
   createdAt: string;
+  /** Branches this account may work in (ADR-010). */
+  branches: Branch[];
+  defaultBranchId: string | null;
 }
 
 /** Screen 13 — Users & roles (Admin). */
@@ -47,6 +50,7 @@ export default function Users() {
             <tr className="border-b border-edge text-left text-sm text-ink-muted">
               <th className="px-3 py-2">User</th>
               <th className="px-3 py-2">Role</th>
+              <th className="px-3 py-2">Branches</th>
               <th className="px-3 py-2">Phone</th>
               <th className="px-3 py-2">Since</th>
               <th className="px-3 py-2">Status</th>
@@ -62,6 +66,29 @@ export default function Users() {
                 </td>
                 <td className="px-3 py-2">
                   <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">{u.role}</span>
+                </td>
+                <td className="px-3 py-2">
+                  {u.branches.length === 0 ? (
+                    <span className="text-sm font-semibold text-danger" title="This account cannot sign in">
+                      none — cannot sign in
+                    </span>
+                  ) : (
+                    <span className="flex flex-wrap gap-1">
+                      {u.branches.map((b) => (
+                        <span
+                          key={b.id}
+                          title={b.name}
+                          className={`rounded px-1.5 py-0.5 font-mono text-xs ${
+                            b.id === u.defaultBranchId
+                              ? 'bg-primary/15 font-bold text-primary'
+                              : 'bg-ink/10 text-ink-muted'
+                          }`}
+                        >
+                          {b.code}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-ink-muted">{u.phone ?? '—'}</td>
                 <td className="px-3 py-2 text-sm text-ink-muted">{shortDate(u.createdAt)}</td>
@@ -107,14 +134,40 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
     role: user?.role ?? ('CASHIER' as UserRole),
     password: '',
   });
+  // null ⇒ the operator has not touched the picker yet, which lets a
+  // single-branch business get a working account without ticking anything.
+  // Derived during render rather than synced by an effect.
+  const [picked, setPicked] = useState<string[] | null>(user ? user.branches.map((b) => b.id) : null);
+  const [pickedDefault, setPickedDefault] = useState<string | null>(user?.defaultBranchId ?? null);
   const [error, setError] = useState<string | null>(null);
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ['branches'],
+    queryFn: () => api<Branch[]>('/branches'),
+  });
+
+  const branchIds = picked ?? (branches.length === 1 ? [branches[0].id] : []);
+  const defaultBranchId =
+    pickedDefault && branchIds.includes(pickedDefault) ? pickedDefault : (branchIds[0] ?? null);
+
+  const toggleBranch = (id: string) => {
+    const next = branchIds.includes(id) ? branchIds.filter((b) => b !== id) : [...branchIds, id];
+    setPicked(next);
+    if (!next.includes(pickedDefault ?? '')) setPickedDefault(next[0] ?? null);
+  };
 
   const save = useMutation({
     mutationFn: async () => {
       if (user) {
         await api(`/users/${user.id}`, {
           method: 'PATCH',
-          body: { fullName: form.fullName, phone: form.phone || undefined, role: form.role },
+          body: {
+            fullName: form.fullName,
+            phone: form.phone || undefined,
+            role: form.role,
+            branchIds,
+            defaultBranchId: defaultBranchId ?? undefined,
+          },
         });
         // A password is optional on edit; when provided, apply it (also clears
         // any lockout and signs the user out everywhere).
@@ -134,6 +187,8 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
           phone: form.phone || undefined,
           role: form.role,
           password: form.password,
+          branchIds,
+          defaultBranchId: defaultBranchId ?? undefined,
         },
       });
     },
@@ -144,6 +199,12 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    // Caught here as well as server-side: an account with no branch cannot sign
+    // in at all, and that is a confusing failure to debug after the fact.
+    if (branchIds.length === 0) {
+      setError('Assign at least one branch — an account with no branch cannot sign in.');
+      return;
+    }
     save.mutate();
   };
 
@@ -174,6 +235,47 @@ function UserForm({ user, onClose, onDone }: { user: UserRow | null; onClose: ()
             <option key={r} value={r}>{r}</option>
           ))}
         </select>
+
+        <fieldset className="mt-3">
+          <legend className="mb-1 block text-sm font-medium">Branches *</legend>
+          <p className="mb-2 text-xs text-ink-muted">
+            Where this user may work. The starred branch opens at sign-in.
+            {user && ' Changing this signs them out everywhere.'}
+          </p>
+          <div className="rounded-lg border border-edge">
+            {branches.length === 0 && (
+              <p className="px-3 py-2 text-sm text-ink-muted">No branches configured yet.</p>
+            )}
+            {branches.map((b) => {
+              const checked = branchIds.includes(b.id);
+              return (
+                <div key={b.id} className="flex items-center gap-2 border-b border-edge px-3 py-2 last:border-0">
+                  <input
+                    type="checkbox"
+                    id={`branch-${b.id}`}
+                    checked={checked}
+                    onChange={() => toggleBranch(b.id)}
+                    className="h-4 w-4"
+                  />
+                  <label htmlFor={`branch-${b.id}`} className="flex-1 cursor-pointer text-[15px]">
+                    <span className="font-mono text-xs text-ink-muted">{b.code}</span> {b.name}
+                  </label>
+                  {checked && (
+                    <button
+                      type="button"
+                      onClick={() => setPickedDefault(b.id)}
+                      title={b.id === defaultBranchId ? 'Opens at sign-in' : 'Make this the sign-in branch'}
+                      aria-label={`Make ${b.name} the sign-in branch`}
+                      className={b.id === defaultBranchId ? 'text-primary' : 'text-ink-muted hover:text-ink'}
+                    >
+                      {b.id === defaultBranchId ? '★' : '☆'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </fieldset>
 
         <label className={label} htmlFor="user-password">{user ? 'New password' : 'Password *'}</label>
         <input

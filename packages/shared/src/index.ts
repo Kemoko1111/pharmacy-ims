@@ -51,17 +51,34 @@ export type BatchStatus = 'ACTIVE' | 'EXPIRED' | 'QUARANTINED' | 'DEPLETED';
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
+/** A shop. Branch is a stock-location dimension, not a tenant (ADR-010). */
+export interface Branch {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
   fullName: string;
   role: UserRole;
+  /** null ⇒ consolidated all-branch view (ADMIN, read-only). */
+  activeBranch: Branch | null;
+  /** Branches this user may act in. */
+  branches: Branch[];
 }
 
 export interface LoginResponse {
   accessToken: string;
   refreshToken: string;
   user: AuthUser;
+}
+
+export interface SwitchBranchResponse {
+  accessToken: string;
+  activeBranch: Branch | null;
+  branches: Branch[];
 }
 
 // ── Catalog ──────────────────────────────────────────────────────────────────
@@ -137,6 +154,8 @@ export interface PaymentCreate {
 
 export interface SaleCreate {
   clientSaleId: string; // UUIDv7 generated at the till (idempotency key)
+  /** Offline sync only: the branch the sale was actually taken at (ADR-010). */
+  branchId?: string;
   soldAt: string; // ISO timestamp, client clock (offline-true)
   customerId?: string | null;
   items: SaleItemCreate[];

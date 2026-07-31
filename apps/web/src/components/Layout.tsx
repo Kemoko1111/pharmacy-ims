@@ -5,6 +5,7 @@ import { useOnline } from '../lib/useOnline';
 import { refreshSnapshot } from '../lib/offline';
 import { useClickAway } from '../lib/useClickAway';
 import { NotificationsBell } from './NotificationsBell';
+import { BranchSwitcher } from './BranchSwitcher';
 
 const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/pos', label: 'POS', roles: ['CASHIER', 'PHARMACIST', 'MANAGER'] },
@@ -13,6 +14,7 @@ const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/batches', label: 'Batches', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
   { to: '/purchasing', label: 'Purchasing', roles: ['INVENTORY_OFFICER', 'MANAGER'] },
   { to: '/adjustments', label: 'Adjustments', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
+  { to: '/transfers', label: 'Transfers', roles: ['PHARMACIST', 'MANAGER', 'INVENTORY_OFFICER'] },
   { to: '/sales', label: 'Sales' },
   { to: '/customers', label: 'Customers', roles: ['PHARMACIST', 'MANAGER'] },
   { to: '/reports', label: 'Reports', roles: ['MANAGER', 'PHARMACIST'] },
@@ -41,13 +43,17 @@ export function Layout() {
   useClickAway(headerRef, menuOpen, useCallback(() => setMenuOpen(false), []));
 
   // Catalogue snapshot for offline POS: on mount + every 15 min (ADR-006)
+  // Cached stock is per-branch (ADR-010), so re-snapshot whenever the active
+  // branch changes as well as on the 15-minute cycle.
+  const activeBranchId = user?.activeBranch?.id ?? null;
   useEffect(() => {
+    if (!activeBranchId) return;
     refreshSnapshot().catch(() => {});
     const id = setInterval(() => {
       if (navigator.onLine) refreshSnapshot().catch(() => {});
     }, 15 * 60_000);
     return () => clearInterval(id);
-  }, []);
+  }, [activeBranchId]);
 
   const visibleNav = NAV.filter(
     (n) => !n.roles || user?.role === 'ADMIN' || n.roles.includes(user?.role ?? ''),
@@ -78,6 +84,9 @@ export function Layout() {
               ⇅ {unsynced} unsynced
             </span>
           )}
+
+          {/* Which shop this till is working in (ADR-010) */}
+          <BranchSwitcher />
 
           {/* Desktop nav (inline) */}
           <nav className="ml-6 hidden gap-1 lg:flex">

@@ -45,8 +45,16 @@ function makeProduct(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const TEST_BRANCH_ID = 'b0000000-0000-0000-0000-0000000000aa';
+
 function makeActor(role: RequestUser['role'] = 'CASHIER'): RequestUser {
-  return { id: 'user-1', username: 'akosua', role };
+  return {
+    id: 'user-1',
+    username: 'akosua',
+    role,
+    branchId: TEST_BRANCH_ID,
+    branchIds: [TEST_BRANCH_ID],
+  };
 }
 
 function makeDto(overrides: Partial<SaleCreateDto> = {}): SaleCreateDto {
@@ -64,7 +72,8 @@ function makeQueryRawMock(batchesByProduct: Map<string, LockedBatchFixture[]>) {
   return jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('');
     if (sql.includes('FROM batches')) {
-      const productId = values[0] as string;
+      // branch_id is interpolated first, product_id second (ADR-010).
+      const productId = values[1] as string;
       return Promise.resolve(batchesByProduct.get(productId) ?? []);
     }
     if (sql.includes('nextval')) {
@@ -106,6 +115,7 @@ function buildHarness(opts: {
       findFirst: jest.fn().mockResolvedValue(opts.findFirstBatch ?? null),
       update: batchUpdate.fn,
     },
+    branch: { findUniqueOrThrow: jest.fn().mockResolvedValue({ code: 'ACC' }) },
     notification: { create: jest.fn().mockResolvedValue(undefined) },
     sale: { create: jest.fn().mockResolvedValue(undefined) },
     saleItem: { create: jest.fn().mockResolvedValue(undefined) },
@@ -115,8 +125,9 @@ function buildHarness(opts: {
 
   const saleStub = (actor: RequestUser) => ({
     id: 'sale-1',
+    branchId: TEST_BRANCH_ID,
     clientSaleId: 'a0000000-0000-0000-0000-000000000001',
-    receiptNumber: 'RCP-2026-000001',
+    receiptNumber: 'ACC-RCP-2026-000001',
     cashierId: actor.id,
     status: 'COMPLETED',
     subtotal: new Prisma.Decimal('10.00'),
@@ -126,6 +137,7 @@ function buildHarness(opts: {
     soldAt: new Date(),
     syncedOffline: false,
     cashier: { fullName: 'Akosua Mensah' },
+    branch: { code: 'ACC' },
     items: [],
     payments: [],
   });

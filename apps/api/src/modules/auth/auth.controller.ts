@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Ip, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshDto } from './dto';
+import { LoginDto, RefreshDto, SwitchBranchDto } from './dto';
 import { Public } from '../../common/public.decorator';
 import { CurrentUser } from '../../common/current-user.decorator';
 import type { RequestUser } from '../../common/jwt-auth.guard';
@@ -34,6 +34,17 @@ export class AuthController {
 
   @Get('me')
   me(@CurrentUser() user: RequestUser) {
-    return this.auth.me(user.id);
+    return this.auth.me(user.id, user.branchId);
+  }
+
+  /**
+   * Re-issues the access token against another branch (ADR-010). Branch lives
+   * in the signed token, so switching is a round-trip rather than a header the
+   * client could assert for itself.
+   */
+  @Post('switch-branch')
+  @HttpCode(200)
+  switchBranch(@CurrentUser() user: RequestUser, @Body() dto: SwitchBranchDto) {
+    return this.auth.switchBranch(user.id, dto.branchId ?? null);
   }
 }

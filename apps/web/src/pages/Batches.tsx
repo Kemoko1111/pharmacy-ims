@@ -6,6 +6,7 @@ import { ghs, shortDate } from '../lib/format';
 
 interface BatchRow {
   id: string;
+  branchCode: string;
   productId: string;
   productName: string;
   baseUnit: string;
@@ -28,6 +29,8 @@ const WINDOWS = [
 /** Screen 6 — pharmacist's compliance view. */
 export default function Batches() {
   const { user } = useAuth();
+  // ADMIN viewing every shop at once: only then does a branch column mean anything.
+  const consolidated = user?.activeBranch === null;
   const queryClient = useQueryClient();
   const [windowDays, setWindowDays] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -105,6 +108,7 @@ export default function Batches() {
         <table className="w-full text-[15px]">
           <thead>
             <tr className="border-b border-edge text-left text-sm text-ink-muted">
+              {consolidated && <th className="px-3 py-2">Branch</th>}
               <th className="px-3 py-2">Product</th>
               <th className="px-3 py-2">Batch no.</th>
               <th className="px-3 py-2">Expiry</th>
@@ -116,6 +120,9 @@ export default function Batches() {
           <tbody>
             {(data?.data ?? []).map((b) => (
               <tr key={b.id} className="border-b border-edge last:border-0 hover:bg-bg">
+                {consolidated && (
+                  <td className="px-3 py-2 font-mono text-xs text-ink-muted">{b.branchCode}</td>
+                )}
                 <td className="px-3 py-2 font-medium">{b.productName}</td>
                 <td className="px-3 py-2 font-mono text-sm">{b.batchNumber}</td>
                 <td className="px-3 py-2">
