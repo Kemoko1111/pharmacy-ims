@@ -63,13 +63,20 @@ export class PurchasingService {
       throw new DomainException('PRODUCT_UNKNOWN', 'One or more products do not exist');
     }
 
+    const branchId = this.actorBranch(actor, 'raise a purchase order');
+
     const id = uuid();
     await this.prisma.$transaction(async (tx) => {
+      const branch = await tx.branch.findUniqueOrThrow({
+        where: { id: branchId },
+        select: { code: true },
+      });
       const [{ nextval }] = await tx.$queryRaw<{ nextval: bigint }[]>`SELECT nextval('po_number_seq')`;
       await tx.purchaseOrder.create({
         data: {
           id,
-          poNumber: `PO-${new Date().getFullYear()}-${String(nextval).padStart(4, '0')}`,
+          poNumber: `${branch.code}-PO-${new Date().getFullYear()}-${String(nextval).padStart(4, '0')}`,
+          branchId,
           supplierId: dto.supplierId,
           expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
           notes: dto.notes ?? null,
@@ -101,9 +108,14 @@ export class PurchasingService {
 
   /** Draft a PO from the low-stock list (US-10 AC2). */
   async fromSuggestions(dto: FromSuggestionsDto, actor: RequestUser) {
+    // A branch orders for its own shelves — v_low_stock carries a row per
+    // branch × product since ADR-010, so this must be filtered explicitly.
+    const suggestBranch = this.actorBranch(actor, 'draft an order from suggestions');
     const low = await this.prisma.$queryRaw<
       { product_id: string; qty_base: bigint; reorder_level: number }[]
-    >`SELECT product_id, qty_base, reorder_level FROM v_low_stock`;
+    >`SELECT product_id, qty_base, reorder_level
+      FROM v_low_stock
+      WHERE branch_id = ${suggestBranch}::uuid`;
 
     const wanted = dto.productIds?.length
       ? low.filter((r) => dto.productIds!.includes(r.product_id))
@@ -156,6 +168,8 @@ export class PurchasingService {
    * cost) → RECEIPT movement → PO progress. Over-receipt needs the manager flag.
    */
   async receive(dto: CreateReceiptDto, actor: RequestUser) {
+    const branchId = this.actorBranch(actor, 'receive goods');
+
     const supplier = await this.prisma.supplier.findFirst({
       where: { id: dto.supplierId, deletedAt: null },
     });
@@ -174,12 +188,27 @@ export class PurchasingService {
         }
       }
 
+      // Goods must be received where the order was raised, or stock lands at
+      // the wrong shop and the PO never reconciles (ADR-010).
+      if (po && po.branchId !== branchId) {
+        throw new DomainException(
+          'PO_BRANCH_MISMATCH',
+          'That order was raised for a different branch',
+          { poBranchId: po.branchId },
+        );
+      }
+
+      const branch = await tx.branch.findUniqueOrThrow({
+        where: { id: branchId },
+        select: { code: true },
+      });
       const [{ nextval }] = await tx.$queryRaw<{ nextval: bigint }[]>`SELECT nextval('grn_number_seq')`;
       const grnId = uuid();
       await tx.goodsReceipt.create({
         data: {
           id: grnId,
-          grnNumber: `GRN-${new Date().getFullYear()}-${String(nextval).padStart(4, '0')}`,
+          grnNumber: `${branch.code}-GRN-${new Date().getFullYear()}-${String(nextval).padStart(4, '0')}`,
+          branchId,
           poId: dto.poId ?? null,
           supplierId: dto.supplierId,
           receivedBy: actor.id,
@@ -227,7 +256,8 @@ export class PurchasingService {
         const inCost = new Prisma.Decimal(item.unitCost);
         const existing = await tx.batch.findUnique({
           where: {
-            productId_batchNumber_expiryDate: {
+            branchId_productId_batchNumber_expiryDate: {
+              branchId,
               productId: item.productId,
               batchNumber: item.batchNumber,
               expiryDate: expiry,
@@ -257,6 +287,7 @@ export class PurchasingService {
           await tx.batch.create({
             data: {
               id: batchId,
+              branchId,
               productId: item.productId,
               batchNumber: item.batchNumber,
               expiryDate: expiry,
@@ -280,6 +311,7 @@ export class PurchasingService {
 
         await tx.stockMovement.create({
           data: {
+            branchId,
             productId: item.productId,
             batchId,
             qtyDelta: item.qtyBase,
@@ -374,6 +406,14 @@ export class PurchasingService {
       opts.pageSize,
       total,
     );
+  }
+
+  /** Stock always lands at one shop, so these actions need an active branch. */
+  private actorBranch(actor: RequestUser, action: string): string {
+    if (!actor.branchId) {
+      throw new DomainException('BRANCH_REQUIRED', `Select a branch to ${action}`);
+    }
+    return actor.branchId;
   }
 
   private serializePo(po: Prisma.PurchaseOrderGetPayload<{ include: typeof poInclude }>) {

@@ -1,10 +1,13 @@
 import { UserRole } from '@prisma/client';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -37,6 +40,20 @@ export class CreateUserDto {
   @MinLength(8)
   @Matches(PASSWORD_RULE, { message: PASSWORD_MSG })
   password: string;
+
+  /**
+   * Branches this user may work in (ADR-010). Required: an account with no
+   * branch cannot sign in at all, so silently creating one is a trap.
+   */
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('all', { each: true })
+  branchIds: string[];
+
+  /** Which of `branchIds` to open at login. Defaults to the first. */
+  @IsOptional()
+  @IsUUID()
+  defaultBranchId?: string;
 }
 
 export class UpdateUserDto {
@@ -58,6 +75,17 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** Replaces the user's branch assignments wholesale when present. */
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('all', { each: true })
+  branchIds?: string[];
+
+  @IsOptional()
+  @IsUUID()
+  defaultBranchId?: string;
 }
 
 export class ResetPasswordDto {

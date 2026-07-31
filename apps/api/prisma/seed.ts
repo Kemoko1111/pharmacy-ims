@@ -383,27 +383,61 @@ async function main() {
     prisma.priceHistory.deleteMany(),
     prisma.productBarcode.deleteMany(),
     prisma.productUnit.deleteMany(),
+    prisma.branchProductSetting.deleteMany(),
     prisma.product.deleteMany(),
     prisma.category.deleteMany(),
     prisma.customer.deleteMany(),
     prisma.supplier.deleteMany(),
     prisma.refreshToken.deleteMany(),
+    prisma.userBranch.deleteMany(),
     prisma.user.deleteMany(),
+    prisma.branch.deleteMany(),
     prisma.setting.deleteMany(),
   ]);
 
   const passwordHash = await hash(DEMO_PASSWORD);
 
-  // ── Users: one per role ────────────────────────────────────────────────────
+  // ── Branches (ADR-010) ─────────────────────────────────────────────────────
+  // Two, deliberately: one branch proves nothing about isolation.
+  const branches = [
+    {
+      id: uuid(),
+      code: 'ACC',
+      name: 'Accra Main',
+      address: 'Spintex Road, Accra',
+      phone: '020 000 0000',
+      receiptHeader: { line1: 'PharmaTrack Demo Pharmacy', line2: 'Spintex Road, Accra', line3: 'Tel: 020 000 0000' },
+    },
+    {
+      id: uuid(),
+      code: 'KUM',
+      name: 'Kumasi Branch',
+      address: 'Adum, Kumasi',
+      phone: '020 111 1111',
+      receiptHeader: { line1: 'PharmaTrack Demo Pharmacy — Kumasi', line2: 'Adum, Kumasi', line3: 'Tel: 020 111 1111' },
+    },
+  ];
+  await prisma.branch.createMany({ data: branches });
+  const [accra, kumasi] = branches;
+
+  // ── Users: one per role, scoped to a branch ────────────────────────────────
+  // A Manager belongs to exactly one branch (ADR-010), so Kumasi gets its own.
   const users = [
-    { username: 'admin', fullName: 'System Admin', role: 'ADMIN' as const },
-    { username: 'boateng', fullName: 'Mr. Boateng (Owner)', role: 'MANAGER' as const },
-    { username: 'adjoa', fullName: 'Adjoa Mensah (Pharmacist)', role: 'PHARMACIST' as const },
-    { username: 'kwame', fullName: 'Kwame Osei (Inventory)', role: 'INVENTORY_OFFICER' as const },
-    { username: 'akosua', fullName: 'Akosua Asante (Cashier)', role: 'CASHIER' as const },
+    { username: 'admin', fullName: 'System Admin', role: 'ADMIN' as const, branch: accra.id },
+    { username: 'boateng', fullName: 'Mr. Boateng (Owner)', role: 'MANAGER' as const, branch: accra.id },
+    { username: 'adjoa', fullName: 'Adjoa Mensah (Pharmacist)', role: 'PHARMACIST' as const, branch: accra.id },
+    { username: 'kwame', fullName: 'Kwame Osei (Inventory)', role: 'INVENTORY_OFFICER' as const, branch: accra.id },
+    { username: 'akosua', fullName: 'Akosua Asante (Cashier)', role: 'CASHIER' as const, branch: accra.id },
+    { username: 'yaw', fullName: 'Yaw Darko (Kumasi Manager)', role: 'MANAGER' as const, branch: kumasi.id },
+    { username: 'efua', fullName: 'Efua Owusu (Kumasi Cashier)', role: 'CASHIER' as const, branch: kumasi.id },
   ].map((u) => ({ id: uuid(), passwordHash, ...u }));
 
-  await prisma.user.createMany({ data: users });
+  await prisma.user.createMany({
+    data: users.map(({ branch: _branch, ...u }) => u),
+  });
+  await prisma.userBranch.createMany({
+    data: users.map((u) => ({ userId: u.id, branchId: u.branch, isDefault: true })),
+  });
   const admin = users[0];
 
   // ── Settings ───────────────────────────────────────────────────────────────
@@ -495,39 +529,75 @@ async function main() {
       }
     }
 
-    for (const b of spec.batches) {
-      const batchId = uuid();
-      const expired = b.expiryInDays < 0;
-      await prisma.batch.create({
+    // Accra carries the full spec. Kumasi carries a lighter, partly different
+    // holding — and every fourth product not at all, so the reports have real
+    // per-branch differences to show (a product low at Kumasi, healthy at Accra).
+    const stockPlan: { branchId: string; batches: BatchSpec[] }[] = [
+      { branchId: accra.id, batches: spec.batches },
+      {
+        branchId: kumasi.id,
+        batches:
+          productCount % 4 === 0
+            ? []
+            : spec.batches.slice(0, 1).map((b) => ({
+                ...b,
+                batchNumber: b.batchNumber, // same supplier batch, second location
+                qty: Math.max(1, Math.floor(b.qty * 0.35)),
+              })),
+      },
+    ];
+
+    for (const { branchId, batches } of stockPlan) {
+      for (const b of batches) {
+        const batchId = uuid();
+        const expired = b.expiryInDays < 0;
+        await prisma.batch.create({
+          data: {
+            id: batchId,
+            branchId,
+            productId,
+            batchNumber: b.batchNumber,
+            expiryDate: daysFromNow(b.expiryInDays),
+            qtyOnHand: b.qty,
+            unitCost: new Prisma.Decimal(b.unitCost),
+            status: expired ? 'EXPIRED' : 'ACTIVE',
+          },
+        });
+        await prisma.stockMovement.create({
+          data: {
+            branchId,
+            productId,
+            batchId,
+            qtyDelta: b.qty,
+            type: 'OPENING',
+            refType: 'opening_balance',
+            refId: batchId,
+            unitCost: new Prisma.Decimal(b.unitCost),
+            performedBy: admin.id,
+          },
+        });
+        batchCount++;
+      }
+    }
+
+    // Kumasi is the smaller shop — it reorders earlier on the fast movers.
+    if (spec.reorderLevel >= 100) {
+      await prisma.branchProductSetting.create({
         data: {
-          id: batchId,
+          branchId: kumasi.id,
           productId,
-          batchNumber: b.batchNumber,
-          expiryDate: daysFromNow(b.expiryInDays),
-          qtyOnHand: b.qty,
-          unitCost: new Prisma.Decimal(b.unitCost),
-          status: expired ? 'EXPIRED' : 'ACTIVE',
+          reorderLevel: Math.floor(spec.reorderLevel / 2),
+          updatedBy: admin.id,
         },
       });
-      await prisma.stockMovement.create({
-        data: {
-          productId,
-          batchId,
-          qtyDelta: b.qty,
-          type: 'OPENING',
-          refType: 'opening_balance',
-          refId: batchId,
-          unitCost: new Prisma.Decimal(b.unitCost),
-          performedBy: admin.id,
-        },
-      });
-      batchCount++;
     }
   }
 
   console.log(
-    `Seeded: ${users.length} users (password: ${DEMO_PASSWORD}), ` +
-      `${categoryNames.length} categories, ${productCount} products, ${batchCount} batches.`,
+    `Seeded: ${branches.length} branches (${branches.map((b) => b.code).join(', ')}), ` +
+      `${users.length} users (password: ${DEMO_PASSWORD}), ` +
+      `${categoryNames.length} categories, ${productCount} products, ` +
+      `${batchCount} batches across branches.`,
   );
 }
 

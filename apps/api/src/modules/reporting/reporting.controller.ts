@@ -2,6 +2,8 @@ import { BadRequestException, Controller, Get, Param, Query, Res } from '@nestjs
 import type { Response } from 'express';
 import { ReportingService, SalesGroupBy } from './reporting.service';
 import { Roles } from '../../common/roles.decorator';
+import { CurrentUser } from '../../common/current-user.decorator';
+import type { RequestUser } from '../../common/jwt-auth.guard';
 import { DomainException } from '../../common/domain.exception';
 
 function parseRange(from?: string, to?: string): { from: Date; to: Date } {
@@ -31,52 +33,59 @@ export class ReportingController {
 
   @Get('daily')
   @Roles('MANAGER', 'PHARMACIST', 'CASHIER')
-  daily(@Query('date') date?: string) {
+  daily(@CurrentUser() user: RequestUser, @Query('date') date?: string) {
     const d = date ?? new Date().toISOString().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
       throw new BadRequestException({ code: 'BAD_DATE', message: 'date must be YYYY-MM-DD' });
     }
-    return this.reporting.daily(d);
+    return this.reporting.daily(d, user.branchId);
   }
 
   @Get('dashboard')
   @Roles('MANAGER', 'PHARMACIST')
-  dashboard() {
-    return this.reporting.dashboard();
+  dashboard(@CurrentUser() user: RequestUser) {
+    return this.reporting.dashboard(user.branchId);
   }
 
   @Get('sales')
   @Roles('MANAGER')
   async sales(
+    @CurrentUser() user: RequestUser,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('groupBy') groupBy?: string,
   ) {
     const range = parseRange(from, to);
-    return { rows: await this.reporting.salesReport(range.from, range.to, parseGroupBy(groupBy)) };
+    return {
+      rows: await this.reporting.salesReport(range.from, range.to, parseGroupBy(groupBy), user.branchId),
+    };
   }
 
   @Get('stock-valuation')
   @Roles('MANAGER')
-  stockValuation() {
-    return this.reporting.stockValuation();
+  stockValuation(@CurrentUser() user: RequestUser) {
+    return this.reporting.stockValuation(user.branchId);
   }
 
   @Get('expiring')
   @Roles('MANAGER', 'PHARMACIST')
-  expiring(@Query('window') window?: string) {
+  expiring(@CurrentUser() user: RequestUser, @Query('window') window?: string) {
     const w = Number(window ?? 90);
     if (![30, 60, 90].includes(w)) {
       throw new BadRequestException({ code: 'BAD_WINDOW', message: 'window must be 30|60|90' });
     }
-    return this.reporting.expiring(w);
+    return this.reporting.expiring(w, user.branchId);
   }
 
   @Get('shrinkage')
   @Roles('MANAGER')
-  shrinkage(@Query('from') from?: string, @Query('to') to?: string) {
+  shrinkage(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
     const range = parseRange(from, to);
-    return this.reporting.shrinkage(range.from, range.to);
+    return this.reporting.shrinkage(range.from, range.to, user.branchId);
   }
 
   /** US-13 AC3 — file stream. CSV now; PDF is a Phase 2 spike. */
@@ -84,6 +93,7 @@ export class ReportingController {
   @Roles('MANAGER')
   async export(
     @Param('name') name: string,
+    @CurrentUser() user: RequestUser,
     @Res() res: Response,
     @Query('format') format?: string,
     @Query('from') from?: string,
@@ -100,6 +110,7 @@ export class ReportingController {
       to: range.to,
       groupBy: parseGroupBy(groupBy),
       window: Number(window ?? 90),
+      branchId: user.branchId,
     });
     res
       .status(200)

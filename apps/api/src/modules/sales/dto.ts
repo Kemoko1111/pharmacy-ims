@@ -63,6 +63,15 @@ export class SaleCreateDto {
   @IsUUID()
   clientSaleId: string;
 
+  /**
+   * Set only by the offline sync queue: the branch the money was actually taken
+   * at (ADR-010). Online sales take the branch from the token instead. A
+   * mismatch is quarantined rather than posted to the wrong shop.
+   */
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
   @IsISO8601()
   soldAt: string;
 

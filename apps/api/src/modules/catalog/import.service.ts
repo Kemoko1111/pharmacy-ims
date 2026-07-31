@@ -54,6 +54,16 @@ export class ImportService {
   ) {}
 
   async importCsv(buffer: Buffer, importStock: boolean, actor: RequestUser): Promise<ImportResult> {
+    // Products are shared across branches, but opening stock is not — it has to
+    // land somewhere, so an import that carries stock needs an active branch.
+    if (importStock && !actor.branchId) {
+      throw new DomainException(
+        'BRANCH_REQUIRED',
+        'Select a branch before importing opening stock',
+      );
+    }
+    const importBranchId = actor.branchId!;
+
     let records: Record<string, string>[];
     try {
       records = parse(buffer, {
@@ -172,6 +182,7 @@ export class ImportService {
             await tx.batch.create({
               data: {
                 id: batchId,
+                branchId: importBranchId,
                 productId,
                 batchNumber: 'QB-IMPORT',
                 expiryDate: importExpiry,
@@ -182,6 +193,7 @@ export class ImportService {
             });
             await tx.stockMovement.create({
               data: {
+                branchId: importBranchId,
                 productId,
                 batchId,
                 qtyDelta: onHand,

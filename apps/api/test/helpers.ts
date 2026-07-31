@@ -21,7 +21,19 @@ export async function createTestApp(): Promise<INestApplication> {
   return app;
 }
 
-/** Truncate all app tables (keeps _prisma_migrations) and reset sequences. */
+/**
+ * The two branches every test runs against (ADR-010). Mutated by `resetDb`, so
+ * importing modules see the current ids. A second branch exists specifically so
+ * isolation can be asserted rather than assumed.
+ */
+export const testBranch = {
+  primaryId: '',
+  secondaryId: '',
+  primaryCode: 'ACC',
+  secondaryCode: 'KUM',
+};
+
+/** Truncate all app tables (keeps _prisma_migrations), reset sequences, re-create branches. */
 export async function resetDb() {
   const tables = [
     'audit_logs',
@@ -41,24 +53,42 @@ export async function resetDb() {
     'price_history',
     'product_barcodes',
     'product_units',
+    'branch_product_settings',
     'products',
     'categories',
     'customers',
     'suppliers',
     'refresh_tokens',
+    'user_branches',
     'users',
+    'branches',
     'settings',
   ];
   await prisma.$executeRawUnsafe(
     `TRUNCATE TABLE ${tables.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`,
   );
-  await prisma.$executeRawUnsafe(`ALTER SEQUENCE receipt_number_seq RESTART WITH 1`);
+  for (const seq of ['receipt_number_seq', 'po_number_seq', 'grn_number_seq']) {
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE ${seq} RESTART WITH 1`);
+  }
+
+  testBranch.primaryId = uuid();
+  testBranch.secondaryId = uuid();
+  await prisma.branch.createMany({
+    data: [
+      { id: testBranch.primaryId, code: testBranch.primaryCode, name: 'Accra Main' },
+      { id: testBranch.secondaryId, code: testBranch.secondaryCode, name: 'Kumasi Branch' },
+    ],
+  });
 }
 
 const PASSWORD = 'Password1';
 
-export async function createUser(username: string, role: UserRole) {
-  return prisma.user.create({
+export async function createUser(
+  username: string,
+  role: UserRole,
+  branchId: string = testBranch.primaryId,
+) {
+  const user = await prisma.user.create({
     data: {
       id: uuid(),
       username,
@@ -67,6 +97,11 @@ export async function createUser(username: string, role: UserRole) {
       passwordHash: await hash(PASSWORD),
     },
   });
+  // Login refuses an account with no branch, so every test user gets one.
+  await prisma.userBranch.create({
+    data: { userId: user.id, branchId, isDefault: true },
+  });
+  return user;
 }
 
 export async function login(app: INestApplication, username: string, password = PASSWORD) {
@@ -104,7 +139,7 @@ export interface CatalogFixture {
  * Paracetamol with two ACTIVE batches: early expiry (qty 30) and late expiry
  * (qty 100) — enough structure to exercise FEFO splits and depletion.
  */
-export async function seedCatalog(): Promise<CatalogFixture> {
+export async function seedCatalog(branchId: string = testBranch.primaryId): Promise<CatalogFixture> {
   const categoryId = uuid();
   await prisma.category.create({ data: { id: categoryId, name: `Medicines-${categoryId.slice(-12)}` } });
 
@@ -148,6 +183,7 @@ export async function seedCatalog(): Promise<CatalogFixture> {
     data: [
       {
         id: batchEarlyId,
+        branchId,
         productId,
         batchNumber: 'EARLY',
         expiryDate: early,
@@ -157,6 +193,7 @@ export async function seedCatalog(): Promise<CatalogFixture> {
       },
       {
         id: batchLateId,
+        branchId,
         productId,
         batchNumber: 'LATE',
         expiryDate: late,

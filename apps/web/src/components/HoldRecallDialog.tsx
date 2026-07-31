@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { v7 as uuidv7 } from '../lib/uuid';
-import { db, HeldSale } from '../lib/offline';
+import { db, getActiveBranch, HeldSale } from '../lib/offline';
 import { CartLine, cartTotals, useCart } from '../stores/cart';
 import { fromP, ghs } from '../lib/format';
 import { timeOf } from '../lib/format';
@@ -15,8 +15,14 @@ export function HoldRecallDialog({ cashierId, onClose }: Props) {
   const cart = useCart();
   const [held, setHeld] = useState<HeldSale[]>([]);
 
+  // A cart parked at one shop must not be recallable at another (ADR-010).
   const refresh = () =>
-    db.heldSales.where('cashierId').equals(cashierId).sortBy('heldAt').then(setHeld);
+    db.heldSales
+      .where('cashierId')
+      .equals(cashierId)
+      .and((h) => h.branchId === (getActiveBranch() ?? ''))
+      .sortBy('heldAt')
+      .then(setHeld);
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -27,6 +33,7 @@ export function HoldRecallDialog({ cashierId, onClose }: Props) {
     const first = cart.lines[0];
     await db.heldSales.put({
       id: uuidv7(),
+      branchId: getActiveBranch() ?? '',
       heldAt: new Date().toISOString(),
       cashierId,
       label:

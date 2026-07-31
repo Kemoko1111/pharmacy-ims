@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -14,6 +14,8 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { PurchasingModule } from './modules/purchasing/purchasing.module';
 import { AdjustmentsModule } from './modules/adjustments/adjustments.module';
+import { TransfersModule } from './modules/transfers/transfers.module';
+import { BranchesModule } from './modules/branches/branches.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -22,6 +24,7 @@ import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 import { RolesGuard } from './common/roles.guard';
+import { BranchContextMiddleware } from './common/branch-context.middleware';
 
 @Module({
   imports: [
@@ -45,12 +48,14 @@ import { RolesGuard } from './common/roles.guard';
     PrismaModule,
     AuditModule,
     AuthModule,
+    BranchesModule,
     UsersModule,
     CatalogModule,
     InventoryModule,
     SuppliersModule,
     PurchasingModule,
     AdjustmentsModule,
+    TransfersModule,
     NotificationsModule,
     SettingsModule,
     CustomersModule,
@@ -64,4 +69,12 @@ import { RolesGuard } from './common/roles.guard';
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * Opens the branch context ahead of the guards, which then fill in the branch
+   * once the token is verified (ADR-010).
+   */
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(BranchContextMiddleware).forRoutes('*');
+  }
+}

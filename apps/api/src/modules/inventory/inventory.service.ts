@@ -4,6 +4,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { listEnvelope } from '../../common/pagination';
 import { BatchesQuery, MovementsQuery } from './dto';
 
+interface StockRow {
+  product_id: string;
+  name: string;
+  base_unit: string;
+  qty_base: bigint;
+  value_at_cost: Prisma.Decimal;
+  reorder_level: number;
+}
+
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
@@ -51,11 +60,28 @@ export class InventoryService {
     );
   }
 
-  async stock(lowStock?: string) {
-    // reads the v_stock_on_hand view from the Week 3 DDL
-    const rows = await this.prisma.$queryRaw<
-      { product_id: string; name: string; base_unit: string; qty_base: bigint; value_at_cost: Prisma.Decimal; reorder_level: number }[]
-    >`SELECT * FROM v_stock_on_hand ORDER BY name`;
+  /**
+   * Reads v_stock_on_hand, which since ADR-010 has one row per branch × product.
+   * Without the branch predicate this returns every product once per branch —
+   * raw SQL is outside the branch-scope extension, so the filter is explicit.
+   * A null branch is consolidated mode: sum the branches back together.
+   */
+  async stock(branchId: string | null, lowStock?: string) {
+    const rows = branchId
+      ? await this.prisma.$queryRaw<StockRow[]>`
+          SELECT product_id, name, base_unit, qty_base, value_at_cost, reorder_level
+          FROM v_stock_on_hand
+          WHERE branch_id = ${branchId}::uuid
+          ORDER BY name`
+      : await this.prisma.$queryRaw<StockRow[]>`
+          SELECT product_id, name, base_unit,
+                 SUM(qty_base) AS qty_base,
+                 SUM(value_at_cost)::numeric(14,2) AS value_at_cost,
+                 MAX(reorder_level) AS reorder_level
+          FROM v_stock_on_hand
+          GROUP BY product_id, name, base_unit
+          ORDER BY name`;
+
     return rows
       .map((r) => ({
         productId: r.product_id,

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class LoginDto {
   @IsString()
@@ -21,4 +21,11 @@ export class RefreshDto {
   @IsString()
   @IsNotEmpty()
   refreshToken: string;
+}
+
+export class SwitchBranchDto {
+  /** null ⇒ consolidated all-branch mode (ADMIN, read-only). */
+  @IsOptional()
+  @IsUUID()
+  branchId?: string | null;
 }

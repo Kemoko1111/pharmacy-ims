@@ -28,6 +28,14 @@ const store = {
     localStorage.setItem('pt-access', tokens.accessToken);
     localStorage.setItem('pt-refresh', tokens.refreshToken);
   },
+  /**
+   * Replaces only the access token. Switching branch (ADR-010) re-issues the
+   * access token against the new branch while the refresh token — which is tied
+   * to the device session, not the branch — stays put.
+   */
+  setAccess(accessToken: string) {
+    localStorage.setItem('pt-access', accessToken);
+  },
   clear() {
     localStorage.removeItem('pt-access');
     localStorage.removeItem('pt-refresh');
