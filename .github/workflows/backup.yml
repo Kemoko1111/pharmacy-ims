@@ -20,12 +20,21 @@ jobs:
             echo "PROD_DATABASE_URL not set — skipping (expected before first deploy)"
           fi
 
+      # pg_dump refuses to dump a server newer than itself. Neon upgraded the
+      # managed instance to PostgreSQL 17 and this was still pinned to 16, so
+      # every nightly run from 2026-07-27 failed with "server version mismatch"
+      # and NO backup was produced. Keep this image's major >= the Neon server
+      # major; a newer client can always dump an older server, so bump this
+      # ahead of, not behind, the next Neon upgrade.
       - name: Dump
         if: steps.check.outputs.have_url == 'true'
         run: |
-          docker run --rm postgres:16-alpine \
+          docker run --rm postgres:17-alpine \
             pg_dump --no-owner --format=custom "${{ secrets.PROD_DATABASE_URL }}" \
             > pharmatrack-$(date +%F).dump
+          # A dump that silently produced nothing is worse than a loud failure.
+          test -s pharmatrack-$(date +%F).dump
+          echo "dump size: $(du -h pharmatrack-$(date +%F).dump | cut -f1)"
 
       - name: Upload artifact
         if: steps.check.outputs.have_url == 'true'
