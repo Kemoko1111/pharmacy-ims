@@ -13,7 +13,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # Same major as the Neon production server (17), so a migration that
+        # only works on one of them fails here rather than on the client's data.
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: pharmatrack
           POSTGRES_PASSWORD: pharmatrack

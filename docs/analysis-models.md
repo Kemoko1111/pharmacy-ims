@@ -266,7 +266,7 @@ flowchart TB
             SAL["sales + sync"] ; REP[reporting] ; NOT[notifications] ; AUD[audit]
         end
     end
-    PG[("Neon<br/>PostgreSQL 16")]
+    PG[("Neon<br/>PostgreSQL 17")]
     api --> PG
 
     VER["Vercel<br/>static hosting + CDN"] --> PWA

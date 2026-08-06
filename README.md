@@ -85,7 +85,7 @@ POS — accessible from the till, a phone, or the owner's laptop.
 | Frontend | React 18 + TypeScript + Vite, Tailwind CSS, PWA (offline POS queue via IndexedDB/Dexie) |
 | State / data | TanStack Query (server state) + Zustand (POS cart) |
 | Backend | Node.js 22 + NestJS (modular monolith), class-validator DTOs |
-| ORM / DB | Prisma + PostgreSQL 16 |
+| ORM / DB | Prisma + PostgreSQL 17 |
 | Auth | JWT (short-lived access + rotating refresh), RBAC, argon2 password hashing |
 | Deployment | Vercel (frontend) + Render (API) + Neon (Postgres) |
 | Barcode | USB scanner as keyboard wedge; `@zxing/browser` camera scanning on mobile |
@@ -101,7 +101,7 @@ pharmacy-ims/
 │   └── web/               # React PWA (POS + back office)
 ├── packages/
 │   └── shared/            # shared TypeScript API contract
-├── docker-compose.yml     # PostgreSQL 16 for local dev (option A)
+├── docker-compose.yml     # PostgreSQL 17 for local dev (option A)
 ├── .env.example           # committed; .env is gitignored
 └── README.md
 ```

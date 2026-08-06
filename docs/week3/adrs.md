@@ -94,9 +94,9 @@ by scaffolding one exemplar module (`catalog`) in Week 3 that the team copies.
 
 ---
 
-## ADR-004: Database — PostgreSQL 16 with Prisma ORM
+## ADR-004: Database — PostgreSQL with Prisma ORM
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-08-06 — the major version is now 17, see the addendum)
 
 **Context.** Inventory correctness is the product. We need real foreign keys, CHECK
 constraints, atomic multi-row transactions (sale + movements + batch deduction),
@@ -117,6 +117,24 @@ managed Postgres with the API. *Harder:* Prisma hides some SQL — the two repor
 queries that need window functions/CTEs are written as raw SQL views (`reporting`
 module); base-unit integer arithmetic pushes unit-conversion logic into one service
 (`catalog.UnitConverter`) which must be well-tested.
+
+**Addendum, 2026-08-06 — the major version is 17.** Neon upgraded the managed production
+instance to PostgreSQL 17 without us choosing to, while `docker-compose.yml`, the CI
+service container and the no-Docker `db:local` script all still ran 16. Nobody noticed
+until the nightly `pg_dump` began failing, because a dump client refuses a server newer
+than itself — which meant that for several days the backup we believed we had did not
+exist. A silent major-version drift between development and production is exactly the
+class of defect this ADR exists to prevent, so all three are now pinned to 17 (the
+embedded fallback to 17.10, matching the Neon server exactly). The full e2e suite passes
+unchanged on 17.
+
+The decision itself does not change — Postgres accessed through Prisma; only the number
+moved. Two deliberate omissions: the applied migration SQL keeps its original
+`PostgreSQL 16` header comment, because editing a migration that has already run changes
+its checksum and would crash-loop `prisma migrate deploy` on the next boot; and anyone
+holding an old local volume must drop it (`docker compose down -v`, or
+`rm -rf apps/api/.pgdata`), since a 16 data directory will not start under 17 — `db:local`
+now detects that and says so instead of failing opaquely.
 
 ---
 
