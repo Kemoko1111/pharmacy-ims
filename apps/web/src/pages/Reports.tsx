@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, BASE, fetchWithTimeout, NetworkError } from '../lib/api';
 import { ghs } from '../lib/format';
 
 type Tab = 'sales' | 'stock-valuation' | 'expiring' | 'shrinkage';
@@ -16,6 +16,9 @@ function daysAgo(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Bulk export over a shop link, not a POS round trip — the POS budget is far too tight. */
+const EXPORT_TIMEOUT_MS = 60_000;
+
 /** Screen 9 — Manager reports with CSV export (US-13). */
 export default function Reports() {
   const [tab, setTab] = useState<Tab>('sales');
@@ -23,6 +26,8 @@ export default function Reports() {
   const [to, setTo] = useState(daysAgo(0));
   const [groupBy, setGroupBy] = useState<'product' | 'category' | 'day'>('product');
   const [windowDays, setWindowDays] = useState(90);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const params =
     tab === 'sales'
@@ -38,19 +43,41 @@ export default function Reports() {
     queryFn: () => api<Record<string, unknown>>(`/reports/${tab}${params}`),
   });
 
+  /**
+   * Streams a file rather than JSON, so it goes around `api()` — but it still
+   * needs the deadline `api()` provides, or a hung link leaves the button dead
+   * with no explanation. A month of sales is a bigger response than a POS call,
+   * hence the longer budget.
+   */
   const exportCsv = async () => {
-    const base = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
-    const res = await fetch(`${base}/reports/${tab}/export${params ? params + '&' : '?'}format=csv`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('pt-access')}` },
-    });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = res.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ?? `${tab}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await fetchWithTimeout(
+        `${BASE}/reports/${tab}/export${params ? params + '&' : '?'}format=csv`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('pt-access')}` } },
+        EXPORT_TIMEOUT_MS,
+      );
+      if (!res.ok) {
+        setExportError(res.status === 401 ? 'Session expired — sign in again.' : `Export failed (${res.status}).`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ?? `${tab}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(
+        err instanceof NetworkError
+          ? 'No answer from the server — check the connection and try again.'
+          : 'Export failed.',
+      );
+    } finally {
+      setExporting(false);
+    }
   };
 
   const dateInput = 'rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm';
@@ -74,11 +101,18 @@ export default function Reports() {
         </div>
         <button
           onClick={exportCsv}
-          className="ml-auto rounded-lg border border-primary px-4 py-1.5 text-sm font-semibold text-primary"
+          disabled={exporting}
+          className="ml-auto rounded-lg border border-primary px-4 py-1.5 text-sm font-semibold text-primary disabled:opacity-50"
         >
-          ⬇ Export CSV
+          {exporting ? 'Exporting…' : '⬇ Export CSV'}
         </button>
       </div>
+
+      {exportError && (
+        <p role="alert" className="mb-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+          {exportError}
+        </p>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         {(tab === 'sales' || tab === 'shrinkage') && (

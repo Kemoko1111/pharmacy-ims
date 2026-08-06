@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, BASE, fetchWithTimeout, NetworkError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ghs, shortDate } from '../lib/format';
 
@@ -175,6 +175,9 @@ function UnitRow({
   );
 }
 
+/** A whole catalogue upload, parsed row by row server-side — not a POS round trip. */
+const IMPORT_TIMEOUT_MS = 120_000;
+
 /** US-16: QuickBooks item-list CSV upload with per-row error report. */
 function QbImportButton() {
   const queryClient = useQueryClient();
@@ -192,20 +195,31 @@ function QbImportButton() {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1'}/products/import?importStock=${importStock}`,
+      // Multipart, so it goes around `api()` — but a hung upload with no
+      // deadline leaves the dialog stuck on "Importing…" forever. A catalogue
+      // of a few thousand rows is parsed server-side, so the budget is well
+      // above a POS round trip.
+      const res = await fetchWithTimeout(
+        `${BASE}/products/import?importStock=${importStock}`,
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${localStorage.getItem('pt-access')}` },
           body: form,
         },
+        IMPORT_TIMEOUT_MS,
       );
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error?.message ?? 'Import failed');
       setResult(json);
       queryClient.invalidateQueries({ queryKey: ['products'] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Import failed');
+      setError(
+        err instanceof NetworkError
+          ? 'No answer from the server — the import may not have run. Check the product list before trying again.'
+          : err instanceof Error
+            ? err.message
+            : 'Import failed',
+      );
     } finally {
       setBusy(false);
     }
