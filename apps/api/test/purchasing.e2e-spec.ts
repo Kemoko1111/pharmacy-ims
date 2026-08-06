@@ -174,6 +174,43 @@ describe('Purchasing: PO → receiving (US-09, US-10, US-11)', () => {
     expect(res.body.error.code).toBe('EXPIRED_ON_ARRIVAL');
   });
 
+  /**
+   * Client change request 2026-08-02: a rep turns up with a delivery nobody
+   * raised an order for. The GRN must still post stock, cost and ledger; only
+   * the link back to a purchase order is absent.
+   */
+  it('receives stock with no purchase order and leaves po_id null', async () => {
+    const fix = await seedCatalog();
+
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/goods-receipts')
+      .set(inventory)
+      .send({
+        supplierId,
+        notes: 'walk-in delivery, invoice 88213',
+        items: [
+          { productId: fix.productId, qtyBase: 25, unitCost: '0.50', batchNumber: 'WALKIN1', expiryDate: '2028-09-30' },
+        ],
+      });
+    expect(res.status).toBe(201);
+
+    const grn = await prisma.goodsReceipt.findUnique({ where: { id: res.body.id } });
+    expect(grn?.poId).toBeNull();
+    expect(grn?.notes).toBe('walk-in delivery, invoice 88213');
+
+    const batch = await prisma.batch.findFirst({
+      where: { productId: fix.productId, batchNumber: 'WALKIN1' },
+    });
+    expect(batch?.qtyOnHand).toBe(25);
+    expect(Number(batch?.unitCost)).toBeCloseTo(0.5, 4);
+
+    const movement = await prisma.stockMovement.findFirst({
+      where: { refType: 'goods_receipt', refId: res.body.id },
+    });
+    expect(movement?.type).toBe('RECEIPT');
+    expect(movement?.qtyDelta).toBe(25);
+  });
+
   it('drafts a PO from the low-stock list (US-10 AC2)', async () => {
     const fix = await seedCatalog();
     // drain stock to trip the reorder level (reorderLevel 20, on hand 130)

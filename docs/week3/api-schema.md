@@ -185,7 +185,7 @@ branches; stock valuation sums branches rather than listing a product once per s
 |---|---|---|
 | `GET /notifications` | M+, P | `200 { data: [{id, type, branchId, payload, seenAt}] }` — this branch's plus system-wide (`branchId: null`) |
 | `POST /notifications/:id/seen` | M+, P | `204` |
-| `GET /audit-logs` | A, M | `?entity=&entityId=&userId=&branchId=&from=&to=` → `200 { data, meta }` |
+| `GET /audit-logs` | A, M | `?entity=&entityId=&userId=&from=&to=` → `200 { data, meta }` — rows are branch-scoped automatically by the Prisma extension (audit_logs is branch-tagged, so this branch's entries plus global ones); there is no `branchId` query param, and `forbidNonWhitelisted` would reject one |
 | `GET /settings` / `PATCH /settings` | A | `{ key: value, … }` → `200` (each change audited) |
 | `GET /health` | public | `200 { status: "ok", db: "ok", version }` — uptime checks & Week 7 load test |
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ghs, shortDate } from '../lib/format';
+import { ProductPicker, type PickedProduct } from '../components/ProductPicker';
 
 interface PoLine {
   id: string;
@@ -30,13 +31,21 @@ interface Supplier {
   name: string;
 }
 
-interface ProductOpt {
-  id: string;
-  name: string;
-  baseUnit: string;
-  qtyOnHand: number;
-  reorderLevel: number;
+interface DirectLine {
+  product: PickedProduct | null;
+  qty: string;
+  unitCost: string;
+  batchNumber: string;
+  expiryDate: string;
 }
+
+const emptyDirectLine = (): DirectLine => ({
+  product: null,
+  qty: '',
+  unitCost: '',
+  batchNumber: '',
+  expiryDate: '',
+});
 
 const STATUS_CLS: Record<string, string> = {
   DRAFT: 'bg-ink-muted/15 text-ink-muted',
@@ -51,6 +60,7 @@ export default function Purchasing() {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [receiving, setReceiving] = useState<Po | null>(null);
+  const [directReceiving, setDirectReceiving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const { data: pos } = useQuery({
@@ -86,6 +96,13 @@ export default function Purchasing() {
           className="rounded-lg bg-primary px-4 py-2 font-semibold text-white dark:text-slate-900"
         >
           + New PO
+        </button>
+        {/* Walk-in deliveries: the rep arrives with stock nobody ordered. */}
+        <button
+          onClick={() => setDirectReceiving(true)}
+          className="rounded-lg border border-primary px-4 py-2 font-semibold text-primary"
+        >
+          Receive stock (no PO)
         </button>
         <LowStockDraftButton
           suppliers={suppliers?.data ?? []}
@@ -160,6 +177,17 @@ export default function Purchasing() {
           }}
         />
       )}
+      {directReceiving && (
+        <DirectReceiveDialog
+          suppliers={suppliers?.data ?? []}
+          onClose={() => setDirectReceiving(false)}
+          onDone={(grn) => {
+            setDirectReceiving(false);
+            setMessage(`${grn} posted — stock and ledger updated.`);
+            queryClient.invalidateQueries({ queryKey: ['batches'] });
+          }}
+        />
+      )}
       {receiving && (
         <ReceiveWizard
           po={receiving}
@@ -225,15 +253,10 @@ function NewPoDialog({
   onDone: () => void;
 }) {
   const [supplierId, setSupplierId] = useState('');
-  const [lines, setLines] = useState<{ productId: string; qtyBase: string; unitCost: string }[]>([
-    { productId: '', qtyBase: '', unitCost: '' },
+  const [lines, setLines] = useState<{ product: PickedProduct | null; qtyBase: string; unitCost: string }[]>([
+    { product: null, qtyBase: '', unitCost: '' },
   ]);
   const [error, setError] = useState<string | null>(null);
-
-  const { data: products } = useQuery({
-    queryKey: ['product-opts'],
-    queryFn: () => api<{ data: ProductOpt[] }>('/products?pageSize=200'),
-  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -242,8 +265,8 @@ function NewPoDialog({
         body: {
           supplierId,
           items: lines
-            .filter((l) => l.productId && Number(l.qtyBase) > 0)
-            .map((l) => ({ productId: l.productId, qtyBase: Number(l.qtyBase), unitCost: l.unitCost || '0' })),
+            .filter((l) => l.product && Number(l.qtyBase) > 0)
+            .map((l) => ({ productId: l.product!.id, qtyBase: Number(l.qtyBase), unitCost: l.unitCost || '0' })),
         },
       }),
     onSuccess: onDone,
@@ -274,18 +297,10 @@ function NewPoDialog({
         <div className="mb-1 mt-4 text-sm font-medium">Lines *</div>
         {lines.map((l, idx) => (
           <div key={idx} className="mb-2 grid grid-cols-[1fr_5rem_6rem_2rem] items-center gap-2">
-            <select
-              value={l.productId}
-              onChange={(e) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, productId: e.target.value } : x)))}
-              className={input}
-            >
-              <option value="">Product…</option>
-              {(products?.data ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.qtyOnHand} {p.baseUnit})
-                </option>
-              ))}
-            </select>
+            <ProductPicker
+              value={l.product}
+              onPick={(p) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, product: p } : x)))}
+            />
             <input
               type="number"
               min="1"
@@ -314,7 +329,7 @@ function NewPoDialog({
         ))}
         <button
           type="button"
-          onClick={() => setLines((ls) => [...ls, { productId: '', qtyBase: '', unitCost: '' }])}
+          onClick={() => setLines((ls) => [...ls, { product: null, qtyBase: '', unitCost: '' }])}
           className="text-sm font-semibold text-primary"
         >
           + Add line
@@ -332,6 +347,183 @@ function NewPoDialog({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Receive stock that was never ordered through the system — a rep turns up with
+ * a delivery, or the shop buys over the counter from a wholesaler. Posts the
+ * same GRN as the PO route with `poId` omitted, so the batch, the weighted-
+ * average cost and the RECEIPT movement are all identical; only the paper trail
+ * back to a purchase order is missing.
+ */
+function DirectReceiveDialog({
+  suppliers,
+  onClose,
+  onDone,
+}: {
+  suppliers: Supplier[];
+  onClose: () => void;
+  onDone: (grn: string) => void;
+}) {
+  const [supplierId, setSupplierId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [lines, setLines] = useState<DirectLine[]>([emptyDirectLine()]);
+  const [error, setError] = useState<string | null>(null);
+
+  const ready = useMemo(
+    () =>
+      lines.filter(
+        (l) => l.product && Number(l.qty) > 0 && l.batchNumber.trim() && l.expiryDate,
+      ),
+    [lines],
+  );
+
+  const post = useMutation({
+    mutationFn: () =>
+      api<{ grnNumber: string }>('/goods-receipts', {
+        method: 'POST',
+        body: {
+          supplierId,
+          ...(notes.trim() ? { notes: notes.trim() } : {}),
+          items: ready.map((l) => ({
+            productId: l.product!.id,
+            qtyBase: Number(l.qty),
+            unitCost: l.unitCost || '0',
+            batchNumber: l.batchNumber.trim(),
+            expiryDate: l.expiryDate,
+          })),
+        },
+      }),
+    onSuccess: (grn) => onDone(grn.grnNumber),
+    onError: (err) => setError(err instanceof ApiError ? err.message : 'Posting failed'),
+  });
+
+  const patch = (idx: number, next: Partial<DirectLine>) =>
+    setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, ...next } : x)));
+
+  const input = 'w-full rounded border border-edge bg-bg px-2 py-1.5 outline-none focus:border-primary';
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl rounded-xl border border-edge bg-surface p-6">
+        <h2 className="text-lg font-bold">Receive stock without a purchase order</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          Goes to the branch you are signed into. Batch number and expiry are required — they are what
+          the expiry report runs on.
+        </p>
+
+        <label className="mb-1 mt-4 block text-sm font-medium">Supplier *</label>
+        <select
+          value={supplierId}
+          onChange={(e) => setSupplierId(e.target.value)}
+          className="w-full rounded-lg border border-edge bg-bg px-3 py-2 outline-none focus:border-primary"
+        >
+          <option value="">Select…</option>
+          {suppliers.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+
+        <table className="mt-4 w-full text-sm">
+          <thead>
+            <tr className="text-left text-ink-muted">
+              <th className="py-1">Product *</th>
+              <th className="w-20">Qty *</th>
+              <th className="w-24">Cost/u</th>
+              <th className="w-32">Batch no. *</th>
+              <th className="w-36">Expiry *</th>
+              <th className="w-8" />
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l, idx) => (
+              <tr key={idx}>
+                <td className="py-1.5 pr-2">
+                  <ProductPicker value={l.product} onPick={(p) => patch(idx, { product: p })} />
+                </td>
+                <td className="pr-2">
+                  <input
+                    type="number"
+                    min="1"
+                    value={l.qty}
+                    onChange={(e) => patch(idx, { qty: e.target.value })}
+                    className={input}
+                  />
+                </td>
+                <td className="pr-2">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    value={l.unitCost}
+                    onChange={(e) => patch(idx, { unitCost: e.target.value })}
+                    className={input}
+                  />
+                </td>
+                <td className="pr-2">
+                  <input
+                    value={l.batchNumber}
+                    onChange={(e) => patch(idx, { batchNumber: e.target.value })}
+                    className={input}
+                  />
+                </td>
+                <td className="pr-2">
+                  <input
+                    type="date"
+                    value={l.expiryDate}
+                    onChange={(e) => patch(idx, { expiryDate: e.target.value })}
+                    className={input}
+                  />
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    onClick={() => setLines((ls) => (ls.length === 1 ? ls : ls.filter((_, i) => i !== idx)))}
+                    disabled={lines.length === 1}
+                    className="text-danger disabled:opacity-30"
+                  >
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <button
+          type="button"
+          onClick={() => setLines((ls) => [...ls, emptyDirectLine()])}
+          className="mt-2 text-sm font-semibold text-primary"
+        >
+          + Add line
+        </button>
+
+        <label className="mb-1 mt-4 block text-sm font-medium">Notes</label>
+        <input
+          value={notes}
+          placeholder="e.g. invoice number the rep left"
+          onChange={(e) => setNotes(e.target.value)}
+          className="w-full rounded-lg border border-edge bg-bg px-3 py-2 outline-none focus:border-primary"
+        />
+
+        {error && <p className="mt-3 rounded bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
+
+        <div className="mt-5 flex items-center gap-2">
+          <span className="text-sm text-ink-muted">
+            {ready.length} complete line{ready.length === 1 ? '' : 's'} of {lines.length}
+          </span>
+          <button onClick={onClose} className="ml-auto rounded-lg border border-edge px-4 py-2">Cancel</button>
+          <button
+            disabled={post.isPending || !supplierId || ready.length === 0}
+            onClick={() => post.mutate()}
+            className="rounded-lg bg-primary px-4 py-2 font-semibold text-white disabled:opacity-50 dark:text-slate-900"
+          >
+            {post.isPending ? 'Posting…' : 'Post goods receipt'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

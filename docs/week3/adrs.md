@@ -94,9 +94,9 @@ by scaffolding one exemplar module (`catalog`) in Week 3 that the team copies.
 
 ---
 
-## ADR-004: Database — PostgreSQL 16 with Prisma ORM
+## ADR-004: Database — PostgreSQL with Prisma ORM
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-08-06 — the major version is now 17, see the addendum)
 
 **Context.** Inventory correctness is the product. We need real foreign keys, CHECK
 constraints, atomic multi-row transactions (sale + movements + batch deduction),
@@ -117,6 +117,24 @@ managed Postgres with the API. *Harder:* Prisma hides some SQL — the two repor
 queries that need window functions/CTEs are written as raw SQL views (`reporting`
 module); base-unit integer arithmetic pushes unit-conversion logic into one service
 (`catalog.UnitConverter`) which must be well-tested.
+
+**Addendum, 2026-08-06 — the major version is 17.** Neon upgraded the managed production
+instance to PostgreSQL 17 without us choosing to, while `docker-compose.yml`, the CI
+service container and the no-Docker `db:local` script all still ran 16. Nobody noticed
+until the nightly `pg_dump` began failing, because a dump client refuses a server newer
+than itself — which meant that for several days the backup we believed we had did not
+exist. A silent major-version drift between development and production is exactly the
+class of defect this ADR exists to prevent, so all three are now pinned to 17 (the
+embedded fallback to 17.10, matching the Neon server exactly). The full e2e suite passes
+unchanged on 17.
+
+The decision itself does not change — Postgres accessed through Prisma; only the number
+moved. Two deliberate omissions: the applied migration SQL keeps its original
+`PostgreSQL 16` header comment, because editing a migration that has already run changes
+its checksum and would crash-loop `prisma migrate deploy` on the next boot; and anyone
+holding an old local volume must drop it (`docker compose down -v`, or
+`rm -rf apps/api/.pgdata`), since a 16 data directory will not start under 17 — `db:local`
+now detects that and says so instead of failing opaquely.
 
 ---
 
@@ -253,7 +271,7 @@ be re-pointed at the `onrender.com` URL, tracked in the OWASP checklist.
 
 ## ADR-010: Multi-branch — one database, branch as a stock-location dimension
 
-**Status:** Accepted
+**Status:** Accepted (supporting decision 1 superseded by ADR-011)
 
 **Context.** After the MVP was built, the client disclosed that the pharmacy operates
 from multiple shops rather than the single site assumed throughout Weeks 1–3. The system
@@ -286,6 +304,8 @@ Supporting decisions:
    costs the same at every shop, so no per-branch price table. Reorder levels genuinely
    differ by shop size, so `branch_product_settings` carries an optional override that
    falls back to `products.reorder_level`.
+   *(⚠️ Superseded by ADR-011 — the client withdrew this answer on 2026-08-02 and asked
+   for branch-level prices. The rest of this ADR stands.)*
 2. **`role` stays global on `users`; reach comes from `user_branches`.** The client's
    managers each run one shop, so a per-branch role matrix would be complexity bought for
    nobody. A Manager is a Manager, and `user_branches` decides where.
@@ -345,3 +365,146 @@ the sender, receipt only the receiver — which is both what physically happens 
 reason no transfer ever needs to write across a branch boundary.
 
 **Branch-accurate history begins at go-live**, since no pre-existing data was migrated.
+
+---
+
+## ADR-011: Branch-level selling prices
+
+**Status:** Proposed (supersedes ADR-010 supporting decision 1)
+
+**Context.** ADR-010 recorded that "a product costs the same at every shop" — the
+client's own answer to a direct question — and built on it. Selling price therefore
+lives on `products.selling_price_base`, `branch_product_settings` carries only a reorder
+level, and the offline catalogue caches one price per product.
+
+On 2026-08-02 the client withdrew that answer, asking in CR-2026-08-02 §8 for "different
+pricing configurations at the branch level". No reason was given, and the reason matters:
+a standing difference between two shops is a different feature from occasional local
+promotions, and only the second needs effective dates. §10 q14 of the SRS asks.
+
+This is the first recorded reversal of a premise an accepted ADR was built on, so it is
+documented as a superseding decision rather than absorbed silently.
+
+**Decision (proposed).** Add an optional per-branch override, resolved with fallback,
+rather than moving price onto the branch wholesale:
+
+1. `branch_product_settings` gains a nullable `selling_price_base`. A null means "no
+   local opinion" and the branch sells at `products.selling_price_base`. This keeps the
+   common case — one price everywhere — as one row in one table, and makes a divergent
+   price a visible exception rather than 26 duplicated rows per branch.
+2. Price resolution happens in one place, server-side, alongside the existing branch
+   scoping, so no call site can accidentally read the base price at a branch that has an
+   override. The POS, receipts, returns and stock valuation all consume the resolved
+   price.
+3. `price_history` gains a nullable `branch_id`. A null row is a change to the base
+   price; a non-null row is a change to one branch's override. BR-03's requirement that
+   every change be versioned and attributable holds either way.
+4. The offline catalogue snapshot already ships per branch (ADR-010), so it carries that
+   branch's *resolved* prices. An offline sale is then priced identically to an online
+   one without the till needing the override rules.
+5. Returns and reprints price from the sale record, not from today's resolution — a
+   refund must match what the customer actually paid.
+
+**Alternatives considered.** *Price rows per branch for every product* — uniform, but
+turns "change this product's price" into a fan-out across branches and makes the common
+case the expensive one. *Percentage modifier per branch* — compact, but the client asked
+for prices, not margins, and rounding a modifier produces prices no one chose, which is
+unacceptable on a shelf label. *Price lists as a first-class entity, branches subscribing
+to one* — the general answer, and the right one for a chain with tiers; disproportionate
+for a client with a handful of shops who has not yet said the difference is systematic.
+
+**Consequences.** *Easier:* a branch can be repriced without touching any other; the
+group price list stays a single number to maintain.
+
+*Harder:* "the price" stops being a column read and becomes a resolution, so anything
+that quotes a price must go through it — a bug class that did not exist before. Existing
+reports that value stock at `products.selling_price_base` become wrong at any branch with
+an override and must be updated together with the schema. Until §10 q14 is answered the
+override is a single current price with no effective dating; if the client turns out to
+want scheduled local promotions, that is a further change on top of this one.
+
+---
+
+## ADR-012: Offline reliability — reachability-based sync, and cached sign-in
+
+**Status:** Accepted (refines ADR-006)
+
+**Context.** ADR-006 designed the offline POS and got the hard part right: an
+append-only queue drained through an idempotent endpoint. Three things around it were
+wrong in practice, all found in use rather than in test.
+
+*The queue drained from one trigger.* `drainQueue()` was called only from the browser's
+`online` event, which fires on a *transition*. A till that is closed with sales queued
+and reopened the next morning already on WiFi never sees a transition, so the sales sat
+there indefinitely. The unsynced badge was correct and nothing was ever lost — but the
+only reliable way to make it move was to unplug the network and plug it back in.
+
+*"Online" meant `navigator.onLine`.* That reports a route, not a reachable server. Shop
+WiFi with a dead uplink, a hotspot out of credit, or the free-tier API asleep all read as
+ONLINE. The till then made live requests that hung — `fetch` has no default timeout —
+so the payment dialog could sit on "Completing…" for minutes with a customer waiting,
+while the queue that exists for exactly this case was never engaged.
+
+*Offline sign-in was specified but not built.* ADR-006 says "offline logins use the last
+successful credential verification cached for 12 h". Only the *session* half shipped: a
+reload during an outage survives, but a cold sign-in posts to `/auth/login` and fails.
+The shop that opens during an outage cannot get into the till at all. The client raised
+this as CR-2026-08-02 §7.
+
+**Decision.**
+
+1. **Reachability replaces link state.** `isOnline()` means "the API answered recently",
+   established by a heartbeat against the unprefixed `GET /health` plus the outcome of
+   every real request the app already makes. `navigator.onLine === false` is still
+   trusted as an immediate offline signal — it is never wrong in that direction.
+2. **Every request is time-boxed** (15 s default, 7 s for the sale POST). A timeout is
+   raised as `NetworkError`, distinct from `ApiError`, so the queue path handles a hung
+   link exactly as it handles a dead one. A sale at the till never waits on the network
+   longer than it takes to print.
+3. **The queue drains from every occasion that could change the outcome**: app start,
+   reachability recovery, a sale being queued, the tab regaining focus, and a backoff
+   timer (5 s doubling to 5 min) while anything is still waiting. Concurrent triggers
+   collapse into one request.
+4. **Failures become visible.** A sale the server refuses stays queued — the money was
+   taken — but records the reason and an attempt count, and after three attempts is
+   counted separately as *rejected* rather than hiding inside "unsynced". Sales queued at
+   another branch are counted separately again, as *other branch*: no amount of retrying
+   moves those until the till switches back (ADR-010).
+5. **Cached sign-in.** A successful *online* sign-in leaves a password verifier on the
+   device — PBKDF2-HMAC-SHA256, 600 000 iterations, per-record random salt, in IndexedDB.
+   When the server cannot be reached, `login()` verifies against it locally. It is
+   consulted only on network failure: an `ApiError` means the server answered and said
+   no, and no local cache may override that.
+
+**Revision to ADR-006's 12 hours.** ADR-006 gave one TTL for what are two different
+things. The cached *session* stays at 12 h — it covers a reload inside one shift. The
+*verifier* is kept for 7 days, because the case that motivated the CR is "the shop opens
+on Monday and the line is down", which a 12-hour window does not reach. It is refreshed
+on every online sign-in and, deliberately, is **not** cleared by signing out: a cashier
+who signs out at close of business must still be able to open the till during tomorrow's
+outage. Revoking a device is a separate explicit act, in Settings.
+
+**Security position, stated plainly.** The verifier is a one-way hash of the same shape
+the server stores; the password is never persisted. A stolen till yields an offline-
+crackable hash, so: high iteration count, per-record salt, lockout for 15 min after 5
+failed attempts, one cached user per device (the current signer-in replaces the last),
+and the 7-day expiry. A password changed or an account disabled on the server is not
+known to a till that cannot reach the server — this is inherent to offline auth, and is
+bounded by the TTL. An offline session grants **local till operation only**: it holds no
+token, so it makes no authenticated requests at all, and nothing it produces reaches the
+database until a genuine online session posts the queue, where the server re-checks the
+user, the role and the branch. `crypto.subtle` requires a secure context, so offline
+sign-in is unavailable over plain HTTP rather than silently downgraded to a weak hash.
+
+**Consequences.** *Easier:* the queue drains on its own from any starting state; a weak
+link degrades to the offline path in seconds instead of minutes; a shop can open during
+an outage; a rejected sale is a thing a manager can see rather than a number that never
+goes down.
+
+*Harder:* "online" is now a probe result, so it can lag reality by up to one heartbeat
+(20 s while down, 60 s while up) — acceptable, since a wrong "online" costs one timed-out
+request. A session opened offline is bounced to the sign-in screen once someone chooses
+to sync, because it has no token to post with; the queue survives that and the sign-in
+screen says how many sales are waiting. The 7-day verifier is a real widening of the
+window in which a stolen till is useful to an attacker, accepted against the cost of a
+pharmacy that cannot sell.

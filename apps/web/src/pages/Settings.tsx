@@ -1,6 +1,9 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
+import { forgetOfflineCredentials, hasOfflineCredential, OFFLINE_TTL_MS } from '../lib/offlineCreds';
+
+const OFFLINE_TTL_DAYS = Math.round(OFFLINE_TTL_MS / 86_400_000);
 
 interface SettingsShape {
   vat_rate?: number;
@@ -110,6 +113,47 @@ function SettingsForm({ initial }: { initial: SettingsShape }) {
           {save.isPending ? 'Saving…' : 'Save settings'}
         </button>
       </form>
+
+      <OfflineSignInPanel />
     </div>
+  );
+}
+
+/**
+ * The only way to revoke a device's cached sign-in on purpose. Signing out
+ * deliberately does not do this — a cashier who signs out at close of business
+ * still has to be able to open the till during tomorrow's outage.
+ */
+function OfflineSignInPanel() {
+  const [saved, setSaved] = useState<boolean | null>(null);
+  const [cleared, setCleared] = useState(false);
+
+  useEffect(() => {
+    hasOfflineCredential().then(setSaved).catch(() => setSaved(false));
+  }, []);
+
+  const forget = async () => {
+    await forgetOfflineCredentials();
+    setSaved(false);
+    setCleared(true);
+  };
+
+  return (
+    <section className="mt-6 max-w-lg rounded-xl border border-edge bg-surface p-6">
+      <div className="text-sm font-semibold text-ink-muted">Offline sign-in on this till</div>
+      <p className="mt-2 text-sm">
+        {saved
+          ? `A sign-in is saved on this device, so the till can be opened during an outage. It expires ${OFFLINE_TTL_DAYS} days after the last online sign-in.`
+          : 'No sign-in is saved on this device. Signing in while online will save one.'}
+      </p>
+      {cleared && <p className="mt-2 text-sm text-ok">Cleared ✓ — this till now needs the server to sign in.</p>}
+      <button
+        onClick={forget}
+        disabled={!saved}
+        className="mt-3 rounded-lg border border-edge px-3 py-2 text-sm font-semibold hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+      >
+        Forget offline sign-in
+      </button>
+    </section>
   );
 }

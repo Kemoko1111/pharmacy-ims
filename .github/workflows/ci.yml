@@ -13,7 +13,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # Same major as the Neon production server (17), so a migration that
+        # only works on one of them fails here rather than on the client's data.
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: pharmatrack
           POSTGRES_PASSWORD: pharmatrack
@@ -62,18 +64,22 @@ jobs:
       - name: Web build
         run: pnpm --filter @pharmatrack/web build
 
-      # Runs last and reports rather than gates. It previously sat before the
-      # build/test steps, so a single unfixable transitive advisory aborted the
-      # run before anything was actually tested — CI was red on main from
-      # 2026-07-24 without once executing the test suite. A check that blocks on
-      # something the project cannot fix stops being a check and starts hiding
-      # the ones that matter.
+      # Blocking again as of 2026-08-06. It was demoted to a non-gating step on
+      # 2026-07-31 because it sat *before* the build and tests, so unfixable
+      # transitive advisories aborted every run before a single test executed —
+      # CI was red on main for a week without once running the suite.
       #
-      # The findings are still surfaced in the job log for the OWASP A06
-      # evidence. All six are transitive; the only one that ships to users is
-      # react-router (RSC-mode CSRF), and this app is a Vite SPA, so it is not
-      # reachable here. Fix properly by bumping react-router-dom to >=8.3.0 —
-      # a major upgrade that deserves its own PR — then restore the gate.
+      # The advisories themselves are now dealt with: pnpm overrides pull
+      # brace-expansion, fast-uri, js-yaml and postcss up to their patched
+      # versions, and @playwright/test is on 1.62. One exception is recorded in
+      # package.json under pnpm.auditConfig.ignoreGhsas:
+      #
+      #   GHSA-qwww-vcr4-c8h2 — react-router RSC-mode CSRF bypass. Only
+      #   reachable through React Server Components; this app is a client-side
+      #   Vite SPA and never enters RSC mode. The fix is react-router 8, a major
+      #   upgrade that deserves its own PR. Drop the entry when that lands.
+      #
+      # It stays last: a fresh advisory should tell us honestly that the code is
+      # fine but a dependency is not, rather than masking the test results.
       - name: Dependency audit (OWASP A06)
         run: pnpm audit --audit-level high
-        continue-on-error: true

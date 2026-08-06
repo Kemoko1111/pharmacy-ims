@@ -1,5 +1,5 @@
 -- =============================================================================
--- PharmaTrack — PostgreSQL 16 schema (authoritative DDL)
+-- PharmaTrack — PostgreSQL 17 schema (authoritative DDL)
 -- COE 454 Week 3 · Generated as design artifact; production migrations via Prisma
 -- Conventions: UUIDv7 PKs (app-generated), money NUMERIC(12,2) GHS,
 --              quantities INTEGER in base units, timestamptz everywhere.

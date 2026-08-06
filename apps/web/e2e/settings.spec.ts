@@ -31,10 +31,29 @@ test('admin: VAT rate change persists across a reload', async ({ page }) => {
   await expect(page.getByLabel('VAT rate (0–1)')).toHaveValue('0.15');
 });
 
-test('admin: an out-of-range VAT rate is rejected with a visible error', async ({ page }) => {
+test('admin: the browser blocks an out-of-range VAT rate before it is sent', async ({ page }) => {
   await login(page, 'admin');
   await page.goto('/settings');
 
+  const vat = page.getByLabel('VAT rate (0–1)');
+  await vat.fill('1.5'); // the input carries max="1"
+  await page.getByRole('button', { name: /save settings/i }).click();
+
+  // `max` fails constraint validation, so the form never submits — no request
+  // leaves the page and neither outcome banner appears.
+  expect(await vat.evaluate((el: HTMLInputElement) => el.checkValidity())).toBe(false);
+  await expect(page.getByText('Saved ✓')).not.toBeVisible();
+});
+
+test('admin: the server still refuses a bad VAT rate when the input constraint is bypassed', async ({ page }) => {
+  await login(page, 'admin');
+  await page.goto('/settings');
+
+  // Anyone with DevTools can drop an HTML attribute, so the client constraint
+  // is a convenience, not a control. Removing it here is the point of the test:
+  // settings drive money math, and the server's refusal must reach the user
+  // rather than failing silently.
+  await page.getByLabel('VAT rate (0–1)').evaluate((el) => el.removeAttribute('max'));
   await page.getByLabel('VAT rate (0–1)').fill('1.5'); // valid range is 0–1 (settings.service.ts KNOWN_KEYS)
   await page.getByRole('button', { name: /save settings/i }).click();
 

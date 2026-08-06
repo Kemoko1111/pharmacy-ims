@@ -12,6 +12,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { SaleCreate } from '@pharmatrack/shared';
 import { api } from './api';
+import type { OfflineCredential } from './offlineCreds';
 
 export interface CachedProduct {
   id: string;
@@ -38,7 +39,19 @@ export interface QueuedSale {
   body: SaleCreate;
   queuedAt: string;
   cashierName: string;
+  /** Drain attempts so far. A sale that keeps failing must become visible. */
+  attempts?: number;
+  /** Why the server last refused it, in the words the manager will need. */
+  lastError?: string | null;
+  lastAttemptAt?: string | null;
 }
+
+/**
+ * A sale the server has actively rejected this many times is not a transient
+ * failure — it needs a human. It stays queued (the money was taken) but is
+ * surfaced separately so it stops hiding inside the "unsynced" count.
+ */
+export const STUCK_AFTER_ATTEMPTS = 3;
 
 export interface HeldSale {
   id: string;
@@ -54,6 +67,8 @@ class PtDb extends Dexie {
   saleQueue!: Table<QueuedSale, string>;
   heldSales!: Table<HeldSale, string>;
   meta!: Table<{ key: string; value: string }, string>;
+  /** Password verifiers for cold sign-in during an outage — see offlineCreds.ts. */
+  offlineAuth!: Table<OfflineCredential, string>;
 
   constructor() {
     super('pharmatrack');
@@ -84,6 +99,15 @@ class PtDb extends Dexie {
         await tx.table('catalog').clear();
         await tx.table('meta').delete('snapshotVersion');
       });
+    // Offline sign-in: only the username is indexed — the verifier is looked up
+    // by it and by nothing else.
+    this.version(4).stores({
+      catalog: '[branchId+id], branchId, name, genericName',
+      saleQueue: 'clientSaleId, queuedAt, branchId',
+      heldSales: 'id, heldAt, cashierId, branchId',
+      offlineAuth: 'username',
+      meta: 'key',
+    });
   }
 }
 
@@ -123,6 +147,23 @@ export async function refreshSnapshot(): Promise<void> {
     await db.catalog.bulkAdd(snap.products.map((p) => ({ ...p, branchId })));
     await db.meta.put({ key: `snapshotVersion:${branchId}`, value: snap.version });
   });
+  await stampSync();
+}
+
+const LAST_SYNCED_KEY = 'lastSyncedAt';
+
+/**
+ * Stamped whenever we have actually reached the server — catalogue pulled down
+ * or queued sales pushed up. The client asked to see this: "offline" on its own
+ * does not tell a cashier whether the till is minutes or days out of date.
+ */
+async function stampSync(): Promise<void> {
+  await db.meta.put({ key: LAST_SYNCED_KEY, value: new Date().toISOString() });
+  window.dispatchEvent(new Event('pt-synced'));
+}
+
+export async function getLastSyncedAt(): Promise<string | null> {
+  return (await db.meta.get(LAST_SYNCED_KEY))?.value ?? null;
 }
 
 function branchCatalog() {
@@ -168,6 +209,43 @@ export async function queuedElsewhereCount(): Promise<number> {
   return db.saleQueue.filter((s) => s.branchId !== activeBranchId).count();
 }
 
+export interface QueueSummary {
+  /** Waiting for this branch and expected to go through. */
+  pending: number;
+  /** Belong to another branch — cannot sync until the till switches back. */
+  deferred: number;
+  /** Repeatedly refused by the server; needs a manager, not another retry. */
+  stuck: number;
+  /** The most recent refusal, for the tooltip. */
+  lastError: string | null;
+}
+
+/**
+ * One read for everything the status bar needs. "3 unsynced" is not actionable
+ * on its own — the cashier has to know whether those are on their way up, sat
+ * behind a branch switch, or refused outright.
+ */
+export async function queueSummary(): Promise<QueueSummary> {
+  const all = await db.saleQueue.toArray();
+  const mine = activeBranchId ? all.filter((s) => s.branchId === activeBranchId) : all;
+  const stuck = mine.filter((s) => (s.attempts ?? 0) >= STUCK_AFTER_ATTEMPTS && s.lastError);
+  return {
+    pending: mine.length - stuck.length,
+    deferred: all.length - mine.length,
+    stuck: stuck.length,
+    lastError: stuck[stuck.length - 1]?.lastError ?? null,
+  };
+}
+
+export interface DrainResult {
+  synced: number;
+  failed: number;
+  deferred: number;
+}
+
+/** In-flight drain, shared so overlapping triggers collapse into one POST. */
+let draining: Promise<DrainResult> | null = null;
+
 /**
  * Drain the queue through the idempotent sync endpoint.
  *
@@ -175,31 +253,59 @@ export async function queuedElsewhereCount(): Promise<number> {
  * the server refuses a mismatch, so posting another branch's sales would just
  * fail. They stay queued and are reported as `deferred` — money was already
  * taken at the till, so dropping them is never an option (ADR-010).
+ *
+ * Several things can ask for a drain at once (reconnect, a new sale, the tab
+ * regaining focus, the retry timer). The endpoint is idempotent so a duplicate
+ * post is safe, but it is still wasted bandwidth on a link that has just proven
+ * itself weak — so concurrent callers await the same promise.
  */
-export async function drainQueue(): Promise<{ synced: number; failed: number; deferred: number }> {
+export function drainQueue(): Promise<DrainResult> {
+  draining ??= runDrain().finally(() => {
+    draining = null;
+  });
+  return draining;
+}
+
+async function runDrain(): Promise<DrainResult> {
   const branchId = activeBranchId;
   const all = await db.saleQueue.orderBy('queuedAt').toArray();
   const queued = branchId ? all.filter((s) => s.branchId === branchId) : all;
   const deferred = all.length - queued.length;
   if (queued.length === 0) return { synced: 0, failed: 0, deferred };
 
-  const res = await api<{ results: { clientSaleId: string; status: string }[] }>('/sync/sales', {
-    method: 'POST',
-    // Send the originating branch so the server can refuse a mismatch rather
-    // than trusting that the client filtered correctly.
-    body: { sales: queued.map((s) => ({ ...s.body, branchId: s.branchId })) },
-  });
+  const res = await api<{ results: { clientSaleId: string; status: string; error?: string }[] }>(
+    '/sync/sales',
+    {
+      method: 'POST',
+      // Send the originating branch so the server can refuse a mismatch rather
+      // than trusting that the client filtered correctly.
+      body: { sales: queued.map((s) => ({ ...s.body, branchId: s.branchId })) },
+      // A shop-wide reconnect can push a whole day of sales at once.
+      timeoutMs: 45_000,
+    },
+  );
 
   let synced = 0;
   let failed = 0;
+  const now = new Date().toISOString();
   for (const r of res.results) {
     if (r.status === 'created' || r.status === 'duplicate') {
       await db.saleQueue.delete(r.clientSaleId);
       synced++;
     } else {
+      // Keep it — the money was taken. But record why, so a sale the server
+      // will never accept surfaces to a manager instead of retrying silently
+      // for the rest of the week.
+      const row = queued.find((s) => s.clientSaleId === r.clientSaleId);
+      await db.saleQueue.update(r.clientSaleId, {
+        attempts: (row?.attempts ?? 0) + 1,
+        lastError: r.error ?? r.status,
+        lastAttemptAt: now,
+      });
       failed++;
     }
   }
   window.dispatchEvent(new Event('pt-queue-changed'));
+  await stampSync();
   return { synced, failed, deferred };
 }

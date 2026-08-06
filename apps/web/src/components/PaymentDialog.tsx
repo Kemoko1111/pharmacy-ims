@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useWedgeSuspended } from '../lib/barcodeWedge';
 import { fromP, ghs, toP } from '../lib/format';
 
 interface Props {
@@ -26,9 +27,15 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
   const [method, setMethod] = useState<'CASH' | 'MOMO'>('CASH');
   const [tendered, setTendered] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [customerQ, setCustomerQ] = useState('');
   const [customer, setCustomer] = useState<CustomerHit | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const customerInputRef = useRef<HTMLInputElement>(null);
+
+  // The scanner listens on window in the capture phase and treats Enter as a
+  // scan terminator. While this dialog is up, Enter belongs to the dialog.
+  useWedgeSuspended();
 
   // Customer records are P/M-only (US-15 / Act 843); cashiers sell anonymous
   const canAttachCustomer = ['PHARMACIST', 'MANAGER', 'ADMIN'].includes(user?.role ?? '');
@@ -36,6 +43,23 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
     queryKey: ['customer-search', customerQ],
     queryFn: () => api<{ data: CustomerHit[] }>(`/customers?q=${encodeURIComponent(customerQ)}&pageSize=5`),
     enabled: canAttachCustomer && customerQ.length >= 2 && !customer,
+  });
+  const hits = customerHits?.data ?? [];
+
+  /**
+   * Claims Enter when the cursor is in the customer box with results showing.
+   * Held in a ref so the single global key handler can consult the live value.
+   */
+  const pickFirstCustomerRef = useRef<() => boolean>(() => false);
+  useEffect(() => {
+    pickFirstCustomerRef.current = () => {
+      if (document.activeElement !== customerInputRef.current) return false;
+      if (customer || hits.length === 0) return false;
+      setCustomer(hits[0]);
+      setCustomerQ('');
+      inputRef.current?.focus();
+      return true;
+    };
   });
 
   const tenderedP = tendered === '' ? null : toP(tendered);
@@ -45,32 +69,60 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
   useEffect(() => inputRef.current?.focus(), []);
 
   const confirm = async () => {
-    if (!canConfirm || busy) return;
+    if (busy) return;
+    // Silence here reads as a broken key. Say why nothing happened.
+    if (!canConfirm) {
+      setError(`Not enough tendered — short by ${ghs(fromP(-(changeP ?? 0)))}`);
+      inputRef.current?.focus();
+      return;
+    }
     setBusy(true);
+    setError(null);
     try {
       await onConfirm({
         method,
         tenderedP: method === 'CASH' ? tenderedP : null,
         customerId: customer?.id ?? null,
       });
+    } catch (err) {
+      // completeSale queues on network failure and handles domain refusals, so
+      // reaching here means something unexpected broke (IndexedDB, mostly).
+      // Whatever it is, the cashier must not be left staring at "Completing…".
+      setError(err instanceof Error ? err.message : 'Could not complete the sale');
     } finally {
       setBusy(false);
     }
   };
 
+  // The window listener is registered once, so its ordering against the other
+  // global handlers stays fixed; it reaches the current state through this ref.
+  // (Listing state in the deps instead made Enter post the sale with whatever
+  // customer was attached at the last re-registration — i.e. none.)
+  const confirmRef = useRef(confirm);
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    confirmRef.current = confirm;
+    closeRef.current = onClose; // an inline arrow at the call site — never stable
+  });
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter') {
+      if (e.key === 'Escape') {
         e.preventDefault();
-        e.stopPropagation();
-        void confirm();
+        closeRef.current();
+        return;
       }
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Enter while picking a customer means "take this one", not "take the
+      // money" — confirming there would drop the customer being searched for.
+      if (pickFirstCustomerRef.current?.()) return;
+      void confirmRef.current();
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [method, tendered, busy]);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" onClick={onClose}>
@@ -104,7 +156,10 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
               min={0}
               step="0.5"
               value={tendered}
-              onChange={(e) => setTendered(e.target.value)}
+              onChange={(e) => {
+                setTendered(e.target.value);
+                setError(null); // a re-count clears the "short by" complaint
+              }}
               placeholder={fromP(totalP)}
               className="mt-1 w-full rounded-lg border border-edge bg-bg px-3 py-3 text-center text-2xl outline-none focus:border-primary"
             />
@@ -135,14 +190,15 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
             ) : (
               <>
                 <input
+                  ref={customerInputRef}
                   value={customerQ}
                   onChange={(e) => setCustomerQ(e.target.value)}
                   placeholder="Search name or phone…"
                   className="w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm outline-none focus:border-primary"
                 />
-                {(customerHits?.data ?? []).length > 0 && (
+                {hits.length > 0 && (
                   <div className="absolute z-10 mt-1 w-full rounded-lg border border-edge bg-surface shadow-lg">
-                    {customerHits!.data.map((c) => (
+                    {hits.map((c) => (
                       <button
                         key={c.id}
                         onClick={() => setCustomer(c)}
@@ -156,6 +212,12 @@ export function PaymentDialog({ totalP, onConfirm, onClose }: Props) {
               </>
             )}
           </div>
+        )}
+
+        {error && (
+          <p className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-center text-sm font-medium text-danger">
+            {error}
+          </p>
         )}
 
         <button
