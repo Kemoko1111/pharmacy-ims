@@ -114,8 +114,10 @@ test('F9 hold/recall: park the sale, badge shows, recall restores the cart', asy
 test('owner: dashboard cards, action-needed, every screen renders', async ({ page }) => {
   await login(page, 'boateng');
   await expect(page).toHaveURL(/\/dashboard/);
-  await expect(page.getByText('SALES')).toBeVisible();
-  await expect(page.getByText('RECEIPTS')).toBeVisible();
+  // Exact, or the card label collides with the "Sales" nav link and the
+  // "Sales, last 14 days" heading — getByText matches substrings, case-insensitively.
+  await expect(page.getByText('SALES', { exact: true })).toBeVisible();
+  await expect(page.getByText('RECEIPTS', { exact: true })).toBeVisible();
   await expect(page.getByText(/Action needed/)).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/08-dashboard.png` });
 
