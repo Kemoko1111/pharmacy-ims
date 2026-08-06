@@ -12,22 +12,17 @@ import {
   searchCatalogOffline,
 } from '../lib/offline';
 import { CartLine, cartTotals, useCart } from '../stores/cart';
+import { canUseServer } from '../lib/connectivity';
 import { db } from '../lib/offline';
 import { fromP, ghs, toP } from '../lib/format';
 import { PaymentDialog } from '../components/PaymentDialog';
 import { HoldRecallDialog } from '../components/HoldRecallDialog';
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(id);
-  }, [value, ms]);
-  return v;
-}
+import { useDebounced } from '../lib/useDebounced';
 
 async function searchProducts(q: string): Promise<CachedProduct[]> {
-  if (!navigator.onLine) return searchCatalogOffline(q);
+  // Reachability, not link state: a till on shop WiFi with a dead uplink used
+  // to wait out the full request before falling back to the cache here.
+  if (!canUseServer()) return searchCatalogOffline(q);
   try {
     const res = await api<{ data: CachedProduct[] }>(`/products?q=${encodeURIComponent(q)}&pageSize=20`);
     return res.data;
@@ -99,7 +94,7 @@ export default function Pos() {
   const onScan = useCallback(
     async (code: string) => {
       try {
-        if (navigator.onLine) {
+        if (canUseServer()) {
           const hit = await api<{ product: CachedProduct & { units: CachedProduct['units'] }; unit: { id: string } | null }>(
             `/barcodes/${encodeURIComponent(code)}`,
           );
@@ -127,6 +122,9 @@ export default function Pos() {
   // ── Keyboard map (wireframes §Keyboard shortcuts) ──────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // A modal owns the keyboard while it is up — F2 behind the payment dialog
+      // used to clear the very cart being paid for.
+      if (payOpen || holdOpen) return;
       if (e.key === '/' && document.activeElement !== searchRef.current) {
         e.preventDefault();
         searchRef.current?.focus();
@@ -157,7 +155,7 @@ export default function Pos() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart]);
+  }, [cart, payOpen, holdOpen]);
 
   // search-list arrow navigation
   const onSearchKey = (e: React.KeyboardEvent) => {
@@ -228,8 +226,12 @@ export default function Pos() {
     };
 
     try {
-      if (!navigator.onLine) throw new Error('offline');
-      const sale = await api<{ id: string }>('/sales', { method: 'POST', body });
+      if (!canUseServer()) throw new Error('offline');
+      // Shorter than the app-wide default: a queued sale prints instantly and
+      // syncs later, so waiting 15 s at the till buys nothing but a queue of
+      // customers. api() turns the timeout into a NetworkError, i.e. the
+      // offline path below.
+      const sale = await api<{ id: string }>('/sales', { method: 'POST', body, timeoutMs: 7_000 });
       cart.clear();
       setPayOpen(false);
       navigate('/receipt', { state: { saleId: (sale as { id: string }).id, print: true } });

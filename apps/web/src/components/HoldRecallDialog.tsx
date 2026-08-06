@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { v7 as uuidv7 } from '../lib/uuid';
+import { useWedgeSuspended } from '../lib/barcodeWedge';
 import { db, getActiveBranch, HeldSale } from '../lib/offline';
 import { CartLine, cartTotals, useCart } from '../stores/cart';
 import { fromP, ghs } from '../lib/format';
@@ -14,6 +15,9 @@ interface Props {
 export function HoldRecallDialog({ cashierId, onClose }: Props) {
   const cart = useCart();
   const [held, setHeld] = useState<HeldSale[]>([]);
+
+  // A scan behind this dialog would add to a cart the cashier is trying to park.
+  useWedgeSuspended();
 
   // A cart parked at one shop must not be recallable at another (ADR-010).
   const refresh = () =>

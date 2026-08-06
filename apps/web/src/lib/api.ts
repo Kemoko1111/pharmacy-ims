@@ -1,9 +1,22 @@
 /**
  * Fetch wrapper: bearer token, one silent refresh-and-retry on 401 (rotating
  * refresh tokens, ADR-005), and typed error envelopes (api-schema.md).
+ *
+ * Every request is time-boxed. A till on a weak pharmacy link does not get a
+ * TCP reset — the socket simply hangs, and `fetch` waits on it for minutes. At
+ * a POS that is worse than an outright failure: the cashier presses Enter to
+ * take the money and the dialog sits on "Completing…" with a customer waiting.
+ * A timeout turns that hang into a network failure, which the offline queue
+ * already knows how to handle (ADR-006).
  */
 
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
+export const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
+
+/** Origin root — `/health` is deliberately unprefixed (api-schema.md). */
+export const API_ROOT = BASE.replace(/\/api\/v1\/?$/, '');
+
+/** Long enough for a Render cold start to answer, short enough to not strand a sale. */
+export const REQUEST_TIMEOUT_MS = 15_000;
 
 export class ApiError extends Error {
   constructor(
@@ -14,6 +27,21 @@ export class ApiError extends Error {
     public body?: unknown,
   ) {
     super(message);
+  }
+}
+
+/**
+ * The server was never reached — DNS, socket, CORS or our own timeout. Callers
+ * treat this as "go offline", never as "the server said no", so it must stay
+ * distinguishable from ApiError at every call site.
+ */
+export class NetworkError extends Error {
+  constructor(
+    message: string,
+    public readonly timedOut = false,
+  ) {
+    super(message);
+    this.name = 'NetworkError';
   }
 }
 
@@ -44,6 +72,48 @@ const store = {
 
 export const tokenStore = store;
 
+/**
+ * `fetch` with a deadline, reported as NetworkError rather than a bare
+ * AbortError so callers can tell our timeout from a caller cancellation.
+ * `AbortSignal.any` is not assumed — tills run whatever browser the shop has.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal } = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const caller = init.signal;
+  const forward = () => controller.abort();
+  caller?.addEventListener('abort', forward);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (timedOut) throw new NetworkError(`Request timed out after ${timeoutMs} ms`, true);
+    if (caller?.aborted) throw err; // caller cancelled on purpose — let it through
+    throw new NetworkError(err instanceof Error ? err.message : 'Network request failed');
+  } finally {
+    clearTimeout(timer);
+    caller?.removeEventListener('abort', forward);
+  }
+}
+
+/**
+ * Every attempt to reach the API reports its outcome here. The connectivity
+ * layer listens, so a real request failing flips the badge to OFFLINE straight
+ * away instead of waiting for the next heartbeat.
+ */
+function reportReachability(reached: boolean) {
+  window.dispatchEvent(new CustomEvent('pt-reachability', { detail: { reached } }));
+}
+
 type RefreshOutcome = 'ok' | 'rejected' | 'network';
 let refreshing: Promise<RefreshOutcome> | null = null;
 
@@ -51,7 +121,7 @@ async function tryRefresh(): Promise<RefreshOutcome> {
   if (!store.refresh) return 'rejected';
   refreshing ??= (async () => {
     try {
-      const res = await fetch(`${BASE}/auth/refresh`, {
+      const res = await fetchWithTimeout(`${BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: store.refresh }),
@@ -70,18 +140,36 @@ async function tryRefresh(): Promise<RefreshOutcome> {
 
 export async function api<T = unknown>(
   path: string,
-  options: { method?: string; body?: unknown; retry?: boolean; signal?: AbortSignal } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    retry?: boolean;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  } = {},
 ): Promise<T> {
-  const { method = 'GET', body, retry = true, signal } = options;
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: {
-      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...(store.access ? { Authorization: `Bearer ${store.access}` } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal,
-  });
+  const { method = 'GET', body, retry = true, signal, timeoutMs } = options;
+
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      `${BASE}${path}`,
+      {
+        method,
+        headers: {
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...(store.access ? { Authorization: `Bearer ${store.access}` } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal,
+      },
+      timeoutMs,
+    );
+  } catch (err) {
+    if (err instanceof NetworkError) reportReachability(false);
+    throw err;
+  }
+  reportReachability(true);
 
   if (res.status === 401 && retry && store.refresh) {
     const outcome = await tryRefresh();

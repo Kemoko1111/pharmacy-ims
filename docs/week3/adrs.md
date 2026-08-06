@@ -404,3 +404,89 @@ reports that value stock at `products.selling_price_base` become wrong at any br
 an override and must be updated together with the schema. Until §10 q14 is answered the
 override is a single current price with no effective dating; if the client turns out to
 want scheduled local promotions, that is a further change on top of this one.
+
+---
+
+## ADR-012: Offline reliability — reachability-based sync, and cached sign-in
+
+**Status:** Accepted (refines ADR-006)
+
+**Context.** ADR-006 designed the offline POS and got the hard part right: an
+append-only queue drained through an idempotent endpoint. Three things around it were
+wrong in practice, all found in use rather than in test.
+
+*The queue drained from one trigger.* `drainQueue()` was called only from the browser's
+`online` event, which fires on a *transition*. A till that is closed with sales queued
+and reopened the next morning already on WiFi never sees a transition, so the sales sat
+there indefinitely. The unsynced badge was correct and nothing was ever lost — but the
+only reliable way to make it move was to unplug the network and plug it back in.
+
+*"Online" meant `navigator.onLine`.* That reports a route, not a reachable server. Shop
+WiFi with a dead uplink, a hotspot out of credit, or the free-tier API asleep all read as
+ONLINE. The till then made live requests that hung — `fetch` has no default timeout —
+so the payment dialog could sit on "Completing…" for minutes with a customer waiting,
+while the queue that exists for exactly this case was never engaged.
+
+*Offline sign-in was specified but not built.* ADR-006 says "offline logins use the last
+successful credential verification cached for 12 h". Only the *session* half shipped: a
+reload during an outage survives, but a cold sign-in posts to `/auth/login` and fails.
+The shop that opens during an outage cannot get into the till at all. The client raised
+this as CR-2026-08-02 §7.
+
+**Decision.**
+
+1. **Reachability replaces link state.** `isOnline()` means "the API answered recently",
+   established by a heartbeat against the unprefixed `GET /health` plus the outcome of
+   every real request the app already makes. `navigator.onLine === false` is still
+   trusted as an immediate offline signal — it is never wrong in that direction.
+2. **Every request is time-boxed** (15 s default, 7 s for the sale POST). A timeout is
+   raised as `NetworkError`, distinct from `ApiError`, so the queue path handles a hung
+   link exactly as it handles a dead one. A sale at the till never waits on the network
+   longer than it takes to print.
+3. **The queue drains from every occasion that could change the outcome**: app start,
+   reachability recovery, a sale being queued, the tab regaining focus, and a backoff
+   timer (5 s doubling to 5 min) while anything is still waiting. Concurrent triggers
+   collapse into one request.
+4. **Failures become visible.** A sale the server refuses stays queued — the money was
+   taken — but records the reason and an attempt count, and after three attempts is
+   counted separately as *rejected* rather than hiding inside "unsynced". Sales queued at
+   another branch are counted separately again, as *other branch*: no amount of retrying
+   moves those until the till switches back (ADR-010).
+5. **Cached sign-in.** A successful *online* sign-in leaves a password verifier on the
+   device — PBKDF2-HMAC-SHA256, 600 000 iterations, per-record random salt, in IndexedDB.
+   When the server cannot be reached, `login()` verifies against it locally. It is
+   consulted only on network failure: an `ApiError` means the server answered and said
+   no, and no local cache may override that.
+
+**Revision to ADR-006's 12 hours.** ADR-006 gave one TTL for what are two different
+things. The cached *session* stays at 12 h — it covers a reload inside one shift. The
+*verifier* is kept for 7 days, because the case that motivated the CR is "the shop opens
+on Monday and the line is down", which a 12-hour window does not reach. It is refreshed
+on every online sign-in and, deliberately, is **not** cleared by signing out: a cashier
+who signs out at close of business must still be able to open the till during tomorrow's
+outage. Revoking a device is a separate explicit act, in Settings.
+
+**Security position, stated plainly.** The verifier is a one-way hash of the same shape
+the server stores; the password is never persisted. A stolen till yields an offline-
+crackable hash, so: high iteration count, per-record salt, lockout for 15 min after 5
+failed attempts, one cached user per device (the current signer-in replaces the last),
+and the 7-day expiry. A password changed or an account disabled on the server is not
+known to a till that cannot reach the server — this is inherent to offline auth, and is
+bounded by the TTL. An offline session grants **local till operation only**: it holds no
+token, so it makes no authenticated requests at all, and nothing it produces reaches the
+database until a genuine online session posts the queue, where the server re-checks the
+user, the role and the branch. `crypto.subtle` requires a secure context, so offline
+sign-in is unavailable over plain HTTP rather than silently downgraded to a weak hash.
+
+**Consequences.** *Easier:* the queue drains on its own from any starting state; a weak
+link degrades to the offline path in seconds instead of minutes; a shop can open during
+an outage; a rejected sale is a thing a manager can see rather than a number that never
+goes down.
+
+*Harder:* "online" is now a probe result, so it can lag reality by up to one heartbeat
+(20 s while down, 60 s while up) — acceptable, since a wrong "online" costs one timed-out
+request. A session opened offline is bounced to the sign-in screen once someone chooses
+to sync, because it has no token to post with; the queue survives that and the sign-in
+screen says how many sales are waiting. The 7-day verifier is a real widening of the
+window in which a stolen till is useful to an attacker, accepted against the cost of a
+pharmacy that cannot sell.

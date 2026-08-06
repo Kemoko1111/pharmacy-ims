@@ -1,15 +1,23 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuth } from '../lib/auth';
+import { OfflineLoginError, useAuth } from '../lib/auth';
 import { ApiError } from '../lib/api';
+import { hasOfflineCredential } from '../lib/offlineCreds';
+import { useOnline } from '../lib/useOnline';
 
 export default function Login() {
   const { user, login } = useAuth();
+  const { online, unsynced } = useOnline();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canSignInOffline, setCanSignInOffline] = useState(false);
+
+  useEffect(() => {
+    hasOfflineCredential().then(setCanSignInOffline).catch(() => {});
+  }, []);
 
   if (user) return <Navigate to="/" replace />;
 
@@ -20,7 +28,8 @@ export default function Login() {
     try {
       await login(username.trim(), password);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reach the server');
+      if (err instanceof ApiError || err instanceof OfflineLoginError) setError(err.message);
+      else setError('Could not reach the server');
     } finally {
       setBusy(false);
     }
@@ -31,6 +40,29 @@ export default function Login() {
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border border-edge bg-surface p-8 shadow-sm">
         <h1 className="text-2xl font-bold text-primary">PharmaTrack</h1>
         <p className="mb-6 mt-1 text-sm text-ink-muted">Sign in to start your shift</p>
+
+        {/* An outage at opening time is the moment a cashier most needs to know
+            whether signing in will work at all. */}
+        {!online && (
+          <div className="mb-5 rounded-lg bg-warn/10 px-3 py-2 text-sm text-warn">
+            <span className="font-semibold">● OFFLINE</span> —{' '}
+            {canSignInOffline
+              ? 'you can sign in with the password saved on this till. Sales will queue until the server is back.'
+              : 'this till has no saved sign-in yet, so the server is needed. Restore the connection and try again.'}
+            {unsynced > 0 && (
+              <div className="mt-1 font-semibold">
+                {unsynced} sale{unsynced > 1 ? 's' : ''} still waiting to sync from this till.
+              </div>
+            )}
+          </div>
+        )}
+
+        {online && unsynced > 0 && (
+          <div className="mb-5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+            {unsynced} sale{unsynced > 1 ? 's' : ''} from an earlier shift {unsynced > 1 ? 'are' : 'is'}{' '}
+            waiting — sign in to send {unsynced > 1 ? 'them' : 'it'} up.
+          </div>
+        )}
 
         <label className="mb-1 block text-sm font-medium" htmlFor="login-username">Username</label>
         <input

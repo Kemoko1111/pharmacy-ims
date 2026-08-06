@@ -3,7 +3,9 @@ import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useOnline } from '../lib/useOnline';
 import { refreshSnapshot } from '../lib/offline';
+import { canUseServer } from '../lib/connectivity';
 import { useClickAway } from '../lib/useClickAway';
+import { shortDate, timeOf } from '../lib/format';
 import { NotificationsBell } from './NotificationsBell';
 import { BranchSwitcher } from './BranchSwitcher';
 
@@ -24,6 +26,17 @@ const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/settings', label: 'Settings', roles: [] },
 ];
 
+/**
+ * "Last synced" in words a cashier can act on. An OFFLINE badge alone does not
+ * say whether the till is ten minutes or two days behind the server.
+ */
+function syncedLabel(iso: string | null): string {
+  if (!iso) return 'not synced yet';
+  const then = new Date(iso);
+  const sameDay = then.toDateString() === new Date().toDateString();
+  return sameDay ? `synced ${timeOf(iso)}` : `synced ${shortDate(iso)} ${timeOf(iso)}`;
+}
+
 function useTheme() {
   const [dark, setDark] = useState(document.documentElement.classList.contains('dark'));
   const toggle = () => {
@@ -36,8 +49,8 @@ function useTheme() {
 }
 
 export function Layout() {
-  const { user, logout } = useAuth();
-  const { online, unsynced } = useOnline();
+  const { user, logout, offlineSession } = useAuth();
+  const { online, unsynced, deferred, stuck, lastSyncedAt, syncing, retry } = useOnline();
   const { dark, toggle } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
@@ -49,9 +62,11 @@ export function Layout() {
   const activeBranchId = user?.activeBranch?.id ?? null;
   useEffect(() => {
     if (!activeBranchId) return;
-    refreshSnapshot().catch(() => {});
+    if (canUseServer()) refreshSnapshot().catch(() => {});
     const id = setInterval(() => {
-      if (navigator.onLine) refreshSnapshot().catch(() => {});
+      // Reachability, not link state — a snapshot attempt over a dead link just
+      // burns the request timeout (see connectivity.ts).
+      if (canUseServer()) refreshSnapshot().catch(() => {});
     }, 15 * 60_000);
     return () => clearInterval(id);
   }, [activeBranchId]);
@@ -81,10 +96,43 @@ export function Layout() {
           </span>
 
           {unsynced > 0 && (
-            <span className="rounded-full bg-warn/20 px-2 py-0.5 text-sm font-semibold text-warn">
-              ⇅ {unsynced} unsynced
+            <button
+              onClick={retry}
+              disabled={syncing}
+              title={
+                online
+                  ? 'Send these sales to the server now'
+                  : 'Saved on this till — they go up when the server is reachable'
+              }
+              className="rounded-full bg-warn/20 px-2 py-0.5 text-sm font-semibold text-warn disabled:opacity-60"
+            >
+              {syncing ? `⇅ syncing ${unsynced}…` : `⇅ ${unsynced} unsynced`}
+            </button>
+          )}
+
+          {/* Queued at another shop: no amount of retrying helps until the till
+              switches back, so it must not hide inside the unsynced count. */}
+          {deferred > 0 && (
+            <span
+              className="rounded-full bg-ink-muted/15 px-2 py-0.5 text-sm font-semibold text-ink-muted"
+              title="Taken at another branch — switch to that branch to sync them"
+            >
+              ⇄ {deferred} other branch
             </span>
           )}
+
+          {stuck > 0 && (
+            <span
+              className="rounded-full bg-danger/15 px-2 py-0.5 text-sm font-semibold text-danger"
+              title="The server refused these repeatedly — a manager needs to review them"
+            >
+              ⚠ {stuck} rejected
+            </span>
+          )}
+
+          <span className="hidden text-sm text-ink-muted md:inline" title={lastSyncedAt ?? undefined}>
+            {syncedLabel(lastSyncedAt)}
+          </span>
 
           {/* Which shop this till is working in (ADR-010) */}
           <BranchSwitcher />
@@ -166,6 +214,24 @@ export function Layout() {
               </button>
             </div>
           </nav>
+        )}
+
+        {/* This session was opened against the password saved on the till, so
+            it is not authenticated with the server. Selling works; anything
+            that needs the server waits for a real sign-in. */}
+        {offlineSession && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-warn/30 bg-warn/10 px-4 py-1.5 text-sm text-warn">
+            <span className="font-semibold">Signed in offline.</span>
+            <span>
+              Sales are saved on this till{unsynced > 0 ? ` (${unsynced} waiting)` : ''}. Reports and
+              stock figures may be out of date.
+            </span>
+            {online && (
+              <button onClick={logout} className="ml-auto font-semibold underline">
+                Server is back — sign in to sync
+              </button>
+            )}
+          </div>
         )}
       </header>
 
