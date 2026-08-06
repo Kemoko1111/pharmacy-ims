@@ -253,7 +253,7 @@ be re-pointed at the `onrender.com` URL, tracked in the OWASP checklist.
 
 ## ADR-010: Multi-branch — one database, branch as a stock-location dimension
 
-**Status:** Accepted
+**Status:** Accepted (supporting decision 1 superseded by ADR-011)
 
 **Context.** After the MVP was built, the client disclosed that the pharmacy operates
 from multiple shops rather than the single site assumed throughout Weeks 1–3. The system
@@ -286,6 +286,8 @@ Supporting decisions:
    costs the same at every shop, so no per-branch price table. Reorder levels genuinely
    differ by shop size, so `branch_product_settings` carries an optional override that
    falls back to `products.reorder_level`.
+   *(⚠️ Superseded by ADR-011 — the client withdrew this answer on 2026-08-02 and asked
+   for branch-level prices. The rest of this ADR stands.)*
 2. **`role` stays global on `users`; reach comes from `user_branches`.** The client's
    managers each run one shop, so a per-branch role matrix would be complexity bought for
    nobody. A Manager is a Manager, and `user_branches` decides where.
@@ -345,3 +347,60 @@ the sender, receipt only the receiver — which is both what physically happens 
 reason no transfer ever needs to write across a branch boundary.
 
 **Branch-accurate history begins at go-live**, since no pre-existing data was migrated.
+
+---
+
+## ADR-011: Branch-level selling prices
+
+**Status:** Proposed (supersedes ADR-010 supporting decision 1)
+
+**Context.** ADR-010 recorded that "a product costs the same at every shop" — the
+client's own answer to a direct question — and built on it. Selling price therefore
+lives on `products.selling_price_base`, `branch_product_settings` carries only a reorder
+level, and the offline catalogue caches one price per product.
+
+On 2026-08-02 the client withdrew that answer, asking in CR-2026-08-02 §8 for "different
+pricing configurations at the branch level". No reason was given, and the reason matters:
+a standing difference between two shops is a different feature from occasional local
+promotions, and only the second needs effective dates. §10 q14 of the SRS asks.
+
+This is the first recorded reversal of a premise an accepted ADR was built on, so it is
+documented as a superseding decision rather than absorbed silently.
+
+**Decision (proposed).** Add an optional per-branch override, resolved with fallback,
+rather than moving price onto the branch wholesale:
+
+1. `branch_product_settings` gains a nullable `selling_price_base`. A null means "no
+   local opinion" and the branch sells at `products.selling_price_base`. This keeps the
+   common case — one price everywhere — as one row in one table, and makes a divergent
+   price a visible exception rather than 26 duplicated rows per branch.
+2. Price resolution happens in one place, server-side, alongside the existing branch
+   scoping, so no call site can accidentally read the base price at a branch that has an
+   override. The POS, receipts, returns and stock valuation all consume the resolved
+   price.
+3. `price_history` gains a nullable `branch_id`. A null row is a change to the base
+   price; a non-null row is a change to one branch's override. BR-03's requirement that
+   every change be versioned and attributable holds either way.
+4. The offline catalogue snapshot already ships per branch (ADR-010), so it carries that
+   branch's *resolved* prices. An offline sale is then priced identically to an online
+   one without the till needing the override rules.
+5. Returns and reprints price from the sale record, not from today's resolution — a
+   refund must match what the customer actually paid.
+
+**Alternatives considered.** *Price rows per branch for every product* — uniform, but
+turns "change this product's price" into a fan-out across branches and makes the common
+case the expensive one. *Percentage modifier per branch* — compact, but the client asked
+for prices, not margins, and rounding a modifier produces prices no one chose, which is
+unacceptable on a shelf label. *Price lists as a first-class entity, branches subscribing
+to one* — the general answer, and the right one for a chain with tiers; disproportionate
+for a client with a handful of shops who has not yet said the difference is systematic.
+
+**Consequences.** *Easier:* a branch can be repriced without touching any other; the
+group price list stays a single number to maintain.
+
+*Harder:* "the price" stops being a column read and becomes a resolution, so anything
+that quotes a price must go through it — a bug class that did not exist before. Existing
+reports that value stock at `products.selling_price_base` become wrong at any branch with
+an override and must be updated together with the schema. Until §10 q14 is answered the
+override is a single current price with no effective dating; if the client turns out to
+want scheduled local promotions, that is a further change on top of this one.
