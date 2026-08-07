@@ -24,7 +24,9 @@ async function searchProducts(q: string): Promise<CachedProduct[]> {
   // to wait out the full request before falling back to the cache here.
   if (!canUseServer()) return searchCatalogOffline(q);
   try {
-    const res = await api<{ data: CachedProduct[] }>(`/products?q=${encodeURIComponent(q)}&pageSize=20`);
+    const res = await api<{ data: CachedProduct[] }>(`/products?q=${encodeURIComponent(q)}&pageSize=20`, {
+      cache: false, // the offline path here is the branch snapshot, not a stale search
+    });
     return res.data;
   } catch (err) {
     if (err instanceof ApiError) throw err;
@@ -97,6 +99,7 @@ export default function Pos() {
         if (canUseServer()) {
           const hit = await api<{ product: CachedProduct & { units: CachedProduct['units'] }; unit: { id: string } | null }>(
             `/barcodes/${encodeURIComponent(code)}`,
+            { cache: false }, // ditto — lookupBarcodeOffline knows this branch's shelves
           );
           addProduct(hit.product, hit.unit?.id ?? null);
           return;

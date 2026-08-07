@@ -49,7 +49,7 @@ export default function AuditLog() {
             <option key={e} value={e}>{e === '' ? 'All entities' : e.replace('_', ' ')}</option>
           ))}
         </select>
-        <span className="ml-auto text-sm text-ink-muted">{data?.meta.total ?? 0} entries</span>
+        <span className="ml-auto text-sm text-ink-muted">{data?.meta?.total ?? 0} entries</span>
       </div>
 
       <div className="rounded-xl border border-edge bg-surface">

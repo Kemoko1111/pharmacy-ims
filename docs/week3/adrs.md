@@ -508,3 +508,90 @@ to sync, because it has no token to post with; the queue survives that and the s
 screen says how many sales are waiting. The 7-day verifier is a real widening of the
 window in which a stolen till is useful to an attacker, accepted against the cost of a
 pharmacy that cannot sell.
+
+---
+
+## ADR-013: Offline beyond the POS — a cached read layer for every screen
+
+**Status:** Accepted for reads (2026-08-07). Writes are phase 2 and are **not** built yet;
+their design and risks are recorded here because the client has asked for them.
+
+**Context.** ADR-006 made the POS work without a network and deliberately stopped there:
+selling is the thing a pharmacy cannot pause, and a purpose-built catalogue snapshot was
+the cheapest way to guarantee it. Every other screen calls `api()` directly.
+
+The client tested during an outage and reported that "even the products don't work". He
+was right, and the diagnosis was worse than the symptom: only 5 of 16 screens had any
+offline path, so the other eleven rendered an **empty table with no explanation** —
+indistinguishable from "this pharmacy has no products". Two faults sat underneath:
+
+1. No offline data for anything but the POS catalogue.
+2. A till that *reloaded* during an outage lost its session entirely. The cached shift
+   session was adopted only by a 2.5 s "slow server" grace timer, but a refused
+   connection fails in milliseconds and the `finally` block then cancelled that timer.
+   The cashier was returned to a login screen that could not be reached, holding a
+   perfectly valid session. Fixed with this ADR.
+
+He has asked for the whole system to work offline, including administration.
+
+**Decision.** Cache at the one seam every screen already shares — `api()` — rather than
+building fifteen more bespoke snapshots that would each have to be kept in step with the
+server.
+
+1. **Successful GETs are recorded; failed GETs are served from that record.** The key is
+   the request path, scoped by branch, so a screen shows what it last showed. No screen
+   code changes: sixteen screens gained offline reads without sixteen edits, and screens
+   added later inherit it.
+2. **A separate, disposable IndexedDB database.** `offline.ts` holds work the shop cannot
+   afford to lose — queued sales, held carts, sign-in verifiers. This cache can be
+   rebuilt by going online, so it is capped (300 entries, 512 KB each, oldest evicted)
+   and cleared without ceremony. Mixing the two would put an eviction policy next to
+   unsynced money.
+3. **Never cached:** `/auth/*` (a replayed credential answer is a security question, not
+   a convenience), `/health` (a cached "ok" would tell the connectivity layer the server
+   is up while it is down), `/sync/*`, and `/catalog/snapshot`, which has its own store.
+4. **The POS opts out.** Its offline answers come from the branch snapshot, which knows
+   this shop's stock, not from whatever a previous search happened to return.
+5. **The UI never pretends.** A banner states the data is saved and from when; a screen
+   with no saved copy says so instead of rendering an empty table. Staleness reports the
+   *oldest* read on the page, because a page is as stale as its worst part.
+6. **Sign-out clears it.** Cached screens can hold the user list, the day's takings and
+   the audit log; on a shared till, signing out has to take them with it. The durable
+   queues stay — an unsynced sale belongs to the shop, not the departing cashier.
+
+**Alternatives considered.** *A snapshot endpoint per screen* — accurate and
+branch-aware, but fifteen more contracts to version and keep honest, for screens that are
+read far less often than the POS. *Service-worker HTTP caching* — free and automatic, but
+it caches at the wrong layer: no branch scoping, no staleness surfaced in the UI, and no
+way to clear it on sign-out. *React Query persistence* — close, but it restores query
+state including errors, and would have re-served the empty-table failure faithfully.
+
+**Consequences.** *Easier:* every screen is readable during an outage, including ones
+written later; the till survives a restart mid-outage; the failure mode changed from a
+silent lie to a dated statement.
+
+*Harder:* a manager can now read yesterday's stock while believing it is today's — the
+banner is the only thing standing between him and a bad reorder, so it must never be
+suppressed for tidiness. Cached data now sits on the device, which is why sign-out clears
+it and why nothing under `/auth` is ever stored. And a screen must be opened online once
+before it works offline, which is a real limitation: the first outage after a new screen
+ships still shows nothing.
+
+**Phase 2, not yet built: offline writes.** The client has asked for every screen to be
+*editable* offline, administration included. That is a materially different problem —
+reads can be stale and merely mislead; writes conflict, and the merge decides what is
+true. Recorded now so the risks are chosen rather than discovered:
+
+- **Sales already work** because they are append-only and idempotent by `clientSaleId`.
+  Stock receipts and adjustments are the next safest for the same reason: they add
+  movements rather than overwrite state.
+- **Role and permission edits are the dangerous case.** Two managers editing offline,
+  merged later, can silently grant access nobody intended, and the audit trail records
+  the sync time rather than the decision time. The recommendation is that admin writes
+  require the server — or, if they must be queued, that they re-authenticate on drain and
+  the audit row carries both timestamps.
+- **Price and settings edits made blind can reprice sales already taken** between the
+  edit and the sync. Any queued settings write has to be applied by the server against
+  its current state, not by the till against its stale copy.
+- **The API has no idempotency keys outside `/sync/sales`.** Without them, a queued write
+  retried after an ambiguous failure can duplicate. That is a prerequisite, not a detail.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useOnline } from '../lib/useOnline';
+import { noOfflineCopyAgeMs } from '../lib/offlineCache';
 import { refreshSnapshot } from '../lib/offline';
 import { canUseServer } from '../lib/connectivity';
 import { useClickAway } from '../lib/useClickAway';
@@ -37,6 +38,32 @@ function syncedLabel(iso: string | null): string {
   return sameDay ? `synced ${timeOf(iso)}` : `synced ${shortDate(iso)} ${timeOf(iso)}`;
 }
 
+/**
+ * Shows for a few seconds after a screen asks for data it has no saved copy of
+ * (ADR-013). Driven by a window event rather than per-page error handling, so
+ * every screen gets the same honest answer without sixteen edits — and it
+ * clears itself, because the notice belongs to the navigation that caused it.
+ */
+const NO_COPY_NOTICE_MS = 8000;
+
+function useNoOfflineCopyNotice(): boolean {
+  const [showing, setShowing] = useState(() => {
+    const age = noOfflineCopyAgeMs();
+    return age !== null && age < NO_COPY_NOTICE_MS;
+  });
+  useEffect(() => {
+    const onEvent = () => setShowing(true);
+    window.addEventListener('pt-offline-no-copy', onEvent);
+    return () => window.removeEventListener('pt-offline-no-copy', onEvent);
+  }, []);
+  useEffect(() => {
+    if (!showing) return;
+    const id = setTimeout(() => setShowing(false), NO_COPY_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [showing]);
+  return showing;
+}
+
 function useTheme() {
   const [dark, setDark] = useState(document.documentElement.classList.contains('dark'));
   const toggle = () => {
@@ -50,9 +77,10 @@ function useTheme() {
 
 export function Layout() {
   const { user, logout, offlineSession } = useAuth();
-  const { online, unsynced, deferred, stuck, lastSyncedAt, syncing, retry } = useOnline();
+  const { online, unsynced, deferred, stuck, lastSyncedAt, staleAt, syncing, retry } = useOnline();
   const { dark, toggle } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const noOfflineCopy = useNoOfflineCopyNotice();
   const headerRef = useRef<HTMLElement>(null);
   useClickAway(headerRef, menuOpen, useCallback(() => setMenuOpen(false), []));
 
@@ -231,6 +259,32 @@ export function Layout() {
                 Server is back — sign in to sync
               </button>
             )}
+          </div>
+        )}
+        {/* Some of what is on screen came off this device rather than the
+            server (ADR-013). Never hide that: a manager reading yesterday's
+            stock as if it were today's is worse than a manager reading
+            nothing. */}
+        {staleAt && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-edge bg-ink-muted/10 px-4 py-1.5 text-sm text-ink-muted">
+            <span aria-hidden>🕒</span>
+            <span>
+              Showing saved data from <strong>{syncedLabel(staleAt).replace('synced ', '')}</strong> — this
+              device has no connection, so figures may have changed since.
+            </span>
+          </div>
+        )}
+
+        {/* Asked for a screen that has never been open while online, so there
+            is nothing saved to show. Says which, rather than rendering an
+            empty table that looks like "no records". */}
+        {noOfflineCopy && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-warn/30 bg-warn/10 px-4 py-1.5 text-sm text-warn">
+            <span className="font-semibold">Not available offline.</span>
+            <span>
+              This screen has not been opened while connected, so there is no saved copy on this till. Open
+              it once online and it will work during the next outage.
+            </span>
           </div>
         )}
       </header>

@@ -13,6 +13,7 @@ import Dexie, { type Table } from 'dexie';
 import type { SaleCreate } from '@pharmatrack/shared';
 import { api } from './api';
 import type { OfflineCredential } from './offlineCreds';
+import { setCacheBranch } from './offlineCache';
 
 export interface CachedProduct {
   id: string;
@@ -121,6 +122,9 @@ let activeBranchId: string | null = null;
 
 export function setActiveBranch(branchId: string | null): void {
   activeBranchId = branchId;
+  // The read cache is branch-scoped for the same reason this is (ADR-010/013):
+  // one shop must never be served another's figures.
+  setCacheBranch(branchId);
 }
 
 export function getActiveBranch(): string | null {

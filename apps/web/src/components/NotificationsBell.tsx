@@ -51,7 +51,7 @@ export function NotificationsBell() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
   });
 
-  const count = data?.meta.total ?? 0;
+  const count = data?.meta?.total ?? 0;
 
   return (
     <div className="relative" ref={wrapRef}>

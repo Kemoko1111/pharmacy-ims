@@ -10,6 +10,14 @@
  * already knows how to handle (ADR-006).
  */
 
+import {
+  getCachedResponse,
+  noteFreshRead,
+  noteNoOfflineCopy,
+  noteStaleRead,
+  putCachedResponse,
+} from './offlineCache';
+
 export const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
 
 /** Origin root — `/health` is deliberately unprefixed (api-schema.md). */
@@ -42,6 +50,19 @@ export class NetworkError extends Error {
   ) {
     super(message);
     this.name = 'NetworkError';
+  }
+}
+
+/**
+ * Offline, and this screen has no cached copy because it was never opened while
+ * online (ADR-013). A NetworkError subclass so every existing "we are offline"
+ * branch keeps working; screens that want to say something more useful than
+ * "connection failed" can single it out.
+ */
+export class OfflineDataUnavailableError extends NetworkError {
+  constructor(public readonly path: string) {
+    super('No offline copy of this screen — open it once while online');
+    this.name = 'OfflineDataUnavailableError';
   }
 }
 
@@ -146,9 +167,18 @@ export async function api<T = unknown>(
     retry?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
+    /**
+     * Serve this GET from the offline cache when the server cannot be reached,
+     * and record successful answers for that purpose (ADR-013). Off for callers
+     * that already have a purpose-built offline path — the POS reads its
+     * catalogue snapshot, which knows this branch's stock, rather than whatever
+     * a previous search happened to return.
+     */
+    cache?: boolean;
   } = {},
 ): Promise<T> {
-  const { method = 'GET', body, retry = true, signal, timeoutMs } = options;
+  const { method = 'GET', body, retry = true, signal, timeoutMs, cache = true } = options;
+  const cacheable = cache && method === 'GET';
 
   let res: Response;
   try {
@@ -167,6 +197,18 @@ export async function api<T = unknown>(
     );
   } catch (err) {
     if (err instanceof NetworkError) reportReachability(false);
+    // The request never reached the server. For a read, the last answer we were
+    // given is far more use than an empty screen — as long as the UI is honest
+    // about how old it is.
+    if (err instanceof NetworkError && cacheable) {
+      const hit = await getCachedResponse(path);
+      if (hit) {
+        noteStaleRead(hit.fetchedAt);
+        return hit.data as T;
+      }
+      noteNoOfflineCopy(path);
+      throw new OfflineDataUnavailableError(path);
+    }
     throw err;
   }
   reportReachability(true);
@@ -187,6 +229,10 @@ export async function api<T = unknown>(
   if (!res.ok) {
     const err = json?.error ?? {};
     throw new ApiError(res.status, err.code ?? 'ERROR', err.message ?? res.statusText, err.details, json);
+  }
+  if (cacheable) {
+    noteFreshRead();
+    void putCachedResponse(path, json); // best-effort; a full disk must not fail a read
   }
   return json as T;
 }
