@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import type { AuthUser, LoginResponse, SwitchBranchResponse } from '@pharmatrack/shared';
 import { ApiError, api, tokenStore } from './api';
 import { setActiveBranch } from './offline';
+import { clearApiCache } from './offlineCache';
 import { rememberCredential, verifyOffline } from './offlineCreds';
 
 interface AuthCtx {
@@ -75,6 +76,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const cached = restoreSession();
 
+      // Point the offline layers at the cached branch before anything can read
+      // them. Screens start querying the moment `ready` flips, and both the
+      // catalogue and the response cache are keyed by branch (ADR-010/013) — a
+      // read that arrives before the branch is known finds nothing and reports
+      // the screen as unavailable offline, which is a lie about the data we do
+      // have. Overridden below by whatever /auth/me says.
+      if (cached) adoptSession(cached.user);
+
       if (!tokenStore.access) {
         // An offline sign-in issues no tokens, so this is the normal path for
         // a till that reloads (or a PWA that restarts) during an outage.
@@ -121,12 +130,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           localStorage.removeItem(SESSION_KEY);
           adoptSession(null);
           setUser(null);
-        } else if (!cached) {
+        } else if (cached) {
+          // Network failure with a cached shift session: adopt it here and now.
+          // It used to be left to the grace timer, on the assumption that the
+          // timer fires first — but a refused connection fails in milliseconds,
+          // long before the 2.5 s grace, and `finally` then cancels the timer.
+          // The result was a till that reloaded during an outage being thrown
+          // back to a login screen it could not reach, with a valid session in
+          // hand. The grace timer covers the *slow* server; this covers the
+          // absent one.
+          adoptSession(cached.user);
+          setUser(cached.user);
+        } else {
           // network/cold failure and nothing cached — stay logged out
           adoptSession(null);
           setUser(null);
         }
-        // network failure WITH a cached session: the grace timer already adopted it
       } finally {
         clearTimeout(graceTimer);
         clearTimeout(abortTimer);
@@ -225,6 +244,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     adoptSession(null);
     setOfflineSession(false);
     setUser(null);
+    // Cached screens can hold the user list, takings and the audit log. On a
+    // shared till, signing out has to take them with it (ADR-013). The durable
+    // queues stay: an unsynced sale is the shop's, not the cashier's.
+    await clearApiCache().catch(() => {});
     if (refreshToken) {
       await api('/auth/logout', { method: 'POST', body: { refreshToken }, retry: false }).catch(() => {});
     }

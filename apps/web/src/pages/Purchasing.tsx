@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, isQueued } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ghs, shortDate } from '../lib/format';
 import { ProductPicker, type PickedProduct } from '../components/ProductPicker';
@@ -73,15 +73,27 @@ export default function Purchasing() {
   });
 
   const send = useMutation({
-    mutationFn: (id: string) => api(`/purchase-orders/${id}/send`, { method: 'POST' }),
+    mutationFn: (id: string) =>
+      api(`/purchase-orders/${id}/send`, {
+        method: 'POST',
+        queue: { label: 'Purchase order sent to supplier' },
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pos'] }),
   });
 
   const draftFromLowStock = useMutation({
     mutationFn: (supplierId: string) =>
-      api<Po>('/purchase-orders/from-suggestions', { method: 'POST', body: { supplierId } }),
+      api<Po>('/purchase-orders/from-suggestions', {
+        method: 'POST',
+        body: { supplierId },
+        queue: { label: 'Purchase order drafted from low stock' },
+      }),
     onSuccess: (po) => {
-      setMessage(`Drafted ${po.poNumber} with ${po.items.length} low-stock line(s).`);
+      setMessage(
+        isQueued(po)
+          ? 'Draft saved on this till — it gets its number when the server is reachable.'
+          : `Drafted ${po.poNumber} with ${po.items.length} low-stock line(s).`,
+      );
       queryClient.invalidateQueries({ queryKey: ['pos'] });
     },
     onError: (err) => setMessage(err instanceof ApiError ? err.message : 'Draft failed'),
@@ -183,7 +195,11 @@ export default function Purchasing() {
           onClose={() => setDirectReceiving(false)}
           onDone={(grn) => {
             setDirectReceiving(false);
-            setMessage(`${grn} posted — stock and ledger updated.`);
+            setMessage(
+              grn
+                ? `${grn} posted — stock and ledger updated.`
+                : 'Receipt saved on this till — stock updates on the server when the connection is back.',
+            );
             queryClient.invalidateQueries({ queryKey: ['batches'] });
           }}
         />
@@ -194,7 +210,11 @@ export default function Purchasing() {
           onClose={() => setReceiving(null)}
           onDone={(grn) => {
             setReceiving(null);
-            setMessage(`${grn} posted — stock and ledger updated.`);
+            setMessage(
+              grn
+                ? `${grn} posted — stock and ledger updated.`
+                : 'Receipt saved on this till — stock updates on the server when the connection is back.',
+            );
             queryClient.invalidateQueries({ queryKey: ['pos'] });
             queryClient.invalidateQueries({ queryKey: ['batches'] });
           }}
@@ -262,6 +282,7 @@ function NewPoDialog({
     mutationFn: () =>
       api('/purchase-orders', {
         method: 'POST',
+        queue: { label: 'Purchase order created' },
         body: {
           supplierId,
           items: lines
@@ -365,7 +386,8 @@ function DirectReceiveDialog({
 }: {
   suppliers: Supplier[];
   onClose: () => void;
-  onDone: (grn: string) => void;
+  /** null when the receipt was queued offline and has no GRN number yet. */
+  onDone: (grn: string | null) => void;
 }) {
   const [supplierId, setSupplierId] = useState('');
   const [notes, setNotes] = useState('');
@@ -384,6 +406,7 @@ function DirectReceiveDialog({
     mutationFn: () =>
       api<{ grnNumber: string }>('/goods-receipts', {
         method: 'POST',
+        queue: { label: 'Stock received without a purchase order' },
         body: {
           supplierId,
           ...(notes.trim() ? { notes: notes.trim() } : {}),
@@ -396,7 +419,7 @@ function DirectReceiveDialog({
           })),
         },
       }),
-    onSuccess: (grn) => onDone(grn.grnNumber),
+    onSuccess: (grn) => onDone(isQueued(grn) ? null : grn.grnNumber),
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Posting failed'),
   });
 
@@ -529,7 +552,15 @@ function DirectReceiveDialog({
 }
 
 /** Screen 7 — 3 steps: per-line qty/batch/expiry → review & post. */
-function ReceiveWizard({ po, onClose, onDone }: { po: Po; onClose: () => void; onDone: (grn: string) => void }) {
+function ReceiveWizard({
+  po,
+  onClose,
+  onDone,
+}: {
+  po: Po;
+  onClose: () => void;
+  onDone: (grn: string | null) => void;
+}) {
   const { user } = useAuth();
   const isManager = user?.role === 'MANAGER' || user?.role === 'ADMIN';
   const [step, setStep] = useState<1 | 2>(1);
@@ -557,6 +588,7 @@ function ReceiveWizard({ po, onClose, onDone }: { po: Po; onClose: () => void; o
     mutationFn: () =>
       api<{ grnNumber: string }>('/goods-receipts', {
         method: 'POST',
+        queue: { label: `Stock received against ${po.poNumber ?? 'a purchase order'}` },
         body: {
           poId: po.id,
           supplierId: po.supplierId,
@@ -570,7 +602,7 @@ function ReceiveWizard({ po, onClose, onDone }: { po: Po; onClose: () => void; o
           ...(anyOver && allowOver ? { allowOverReceipt: true } : {}),
         },
       }),
-    onSuccess: (grn) => onDone(grn.grnNumber),
+    onSuccess: (grn) => onDone(isQueued(grn) ? null : grn.grnNumber),
     onError: (err) => {
       setError(err instanceof ApiError ? err.message : 'Posting failed');
       setStep(1);

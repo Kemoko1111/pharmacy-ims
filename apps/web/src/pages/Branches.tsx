@@ -42,7 +42,11 @@ export default function Branches() {
 
   const toggleActive = useMutation({
     mutationFn: (b: BranchRow) =>
-      api(`/branches/${b.id}`, { method: 'PATCH', body: { isActive: !b.isActive } }),
+      api(`/branches/${b.id}`, {
+        method: 'PATCH',
+        body: { isActive: !b.isActive },
+        queue: { label: `Branch ${b.isActive ? 'closed' : 'reopened'}: ${b.code}` },
+      }),
     onSuccess: invalidate,
   });
 
@@ -222,8 +226,12 @@ function BranchForm({
         ...(!codeLocked ? { code: form.code.toUpperCase() } : {}),
       };
       return branch
-        ? api(`/branches/${branch.id}`, { method: 'PATCH', body })
-        : api('/branches', { method: 'POST', body });
+        ? api(`/branches/${branch.id}`, {
+            method: 'PATCH',
+            body,
+            queue: { label: `Branch edited: ${branch.code}` },
+          })
+        : api('/branches', { method: 'POST', body, queue: { label: 'Branch created' } });
     },
     onSuccess: onDone,
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Save failed'),

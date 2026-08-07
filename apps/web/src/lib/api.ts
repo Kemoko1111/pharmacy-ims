@@ -10,6 +10,17 @@
  * already knows how to handle (ADR-006).
  */
 
+// offline.ts imports this module in turn, but only inside function bodies —
+// nothing here runs at evaluation time, so the cycle never bites.
+import { getActiveBranch, queueMutation } from './offline';
+import {
+  getCachedResponse,
+  noteFreshRead,
+  noteNoOfflineCopy,
+  noteStaleRead,
+  putCachedResponse,
+} from './offlineCache';
+
 export const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
 
 /** Origin root — `/health` is deliberately unprefixed (api-schema.md). */
@@ -43,6 +54,33 @@ export class NetworkError extends Error {
     super(message);
     this.name = 'NetworkError';
   }
+}
+
+/**
+ * Offline, and this screen has no cached copy because it was never opened while
+ * online (ADR-013). A NetworkError subclass so every existing "we are offline"
+ * branch keeps working; screens that want to say something more useful than
+ * "connection failed" can single it out.
+ */
+export class OfflineDataUnavailableError extends NetworkError {
+  constructor(public readonly path: string) {
+    super('No offline copy of this screen — open it once while online');
+    this.name = 'OfflineDataUnavailableError';
+  }
+}
+
+/**
+ * What a write resolves to when it was queued instead of sent (ADR-013). The
+ * caller is told the work is saved — because it is, on this device — rather
+ * than shown an error for something that did not fail.
+ */
+export interface QueuedWrite {
+  __queued: true;
+  opId: string;
+}
+
+export function isQueued(res: unknown): res is QueuedWrite {
+  return typeof res === 'object' && res !== null && (res as QueuedWrite).__queued === true;
 }
 
 const store = {
@@ -146,9 +184,41 @@ export async function api<T = unknown>(
     retry?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
+    /**
+     * Serve this GET from the offline cache when the server cannot be reached,
+     * and record successful answers for that purpose (ADR-013). Off for callers
+     * that already have a purpose-built offline path — the POS reads its
+     * catalogue snapshot, which knows this branch's stock, rather than whatever
+     * a previous search happened to return.
+     */
+    cache?: boolean;
+    /**
+     * Queue this write for later instead of failing when the server cannot be
+     * reached (ADR-013), described to the user by `label`. Off for callers with
+     * their own queue (the POS) and for anything that must never be replayed
+     * blind (auth).
+     */
+    queue?: { label: string; actor?: string } | false;
+    /**
+     * Replay protection for a write being drained from the queue (ADR-013).
+     * The server records the answer against this key, so a retry after a lost
+     * response returns the original result rather than posting twice.
+     */
+    idempotencyKey?: string;
   } = {},
 ): Promise<T> {
-  const { method = 'GET', body, retry = true, signal, timeoutMs } = options;
+  const {
+    method = 'GET',
+    body,
+    retry = true,
+    signal,
+    timeoutMs,
+    cache = true,
+    queue,
+    idempotencyKey,
+  } = options;
+  const cacheable = cache && method === 'GET';
+  const queueable = !!queue && method !== 'GET' && method !== 'HEAD';
 
   let res: Response;
   try {
@@ -159,6 +229,7 @@ export async function api<T = unknown>(
         headers: {
           ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
           ...(store.access ? { Authorization: `Bearer ${store.access}` } : {}),
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal,
@@ -167,13 +238,41 @@ export async function api<T = unknown>(
     );
   } catch (err) {
     if (err instanceof NetworkError) reportReachability(false);
+    // The request never reached the server. For a read, the last answer we were
+    // given is far more use than an empty screen — as long as the UI is honest
+    // about how old it is.
+    if (err instanceof NetworkError && cacheable) {
+      const hit = await getCachedResponse(path);
+      if (hit) {
+        noteStaleRead(hit.fetchedAt);
+        return hit.data as T;
+      }
+      noteNoOfflineCopy(path);
+      throw new OfflineDataUnavailableError(path);
+    }
+    if (err instanceof NetworkError && queueable) {
+      const opId = crypto.randomUUID();
+      await queueMutation({
+        opId,
+        branchId: getActiveBranch() ?? '',
+        method,
+        path,
+        body,
+        label: (queue as { label: string }).label,
+        actor: (queue as { actor?: string }).actor ?? '',
+        queuedAt: new Date().toISOString(),
+        rejectedAt: null,
+        lastError: null,
+      });
+      return { __queued: true, opId } as T;
+    }
     throw err;
   }
   reportReachability(true);
 
   if (res.status === 401 && retry && store.refresh) {
     const outcome = await tryRefresh();
-    if (outcome === 'ok') return api(path, { method, body, retry: false });
+    if (outcome === 'ok') return api(path, { method, body, retry: false, queue, idempotencyKey });
     if (outcome === 'rejected') {
       store.clear();
       window.dispatchEvent(new Event('pt-logout'));
@@ -187,6 +286,10 @@ export async function api<T = unknown>(
   if (!res.ok) {
     const err = json?.error ?? {};
     throw new ApiError(res.status, err.code ?? 'ERROR', err.message ?? res.statusText, err.details, json);
+  }
+  if (cacheable) {
+    noteFreshRead();
+    void putCachedResponse(path, json); // best-effort; a full disk must not fail a read
   }
   return json as T;
 }

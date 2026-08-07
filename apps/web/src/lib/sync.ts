@@ -13,7 +13,16 @@
  * waiting. All of them funnel into `drainQueue()`, which is idempotent server-
  * side and de-duplicated client-side.
  */
-import { drainQueue, queueSummary, refreshSnapshot } from './offline';
+import {
+  drainQueue,
+  forgetMutation,
+  noteMutationAttempt,
+  pendingMutations,
+  queueSummary,
+  refreshSnapshot,
+  rejectMutation,
+} from './offline';
+import { ApiError, api, NetworkError } from './api';
 import { canUseServer, getReachability, probe, subscribeReachability } from './connectivity';
 
 export interface SyncState {
@@ -66,7 +75,8 @@ export async function syncNow(reason: string): Promise<void> {
   if (state.syncing) return;
 
   const summary = await queueSummary();
-  if (summary.pending === 0 && summary.stuck === 0) {
+  const writes = (await pendingMutations()).filter((m) => !m.rejectedAt).length;
+  if (summary.pending === 0 && summary.stuck === 0 && writes === 0) {
     cancelRetry();
     if (state.failures !== 0 || state.lastError) {
       state = { syncing: false, lastError: null, failures: 0 };
@@ -87,7 +97,9 @@ export async function syncNow(reason: string): Promise<void> {
   state = { ...state, syncing: true };
   emit();
   try {
+    // Sales first: the money is the part the shop cannot afford to lose.
     const res = await drainQueue();
+    await drainMutations();
     state = {
       syncing: false,
       // A per-sale refusal is not a transport failure: stop the backoff, but
@@ -97,7 +109,8 @@ export async function syncNow(reason: string): Promise<void> {
     };
     emit();
     const left = await queueSummary();
-    if (left.pending > 0) scheduleRetry();
+    const writesLeft = (await pendingMutations()).filter((m) => !m.rejectedAt).length;
+    if (left.pending > 0 || writesLeft > 0) scheduleRetry();
   } catch (err) {
     state = {
       syncing: false,
@@ -109,6 +122,48 @@ export async function syncNow(reason: string): Promise<void> {
     void probe(); // the failure may mean the link went down mid-drain
   }
   void reason; // kept for future telemetry; the call sites document themselves
+}
+
+
+/**
+ * Send queued writes up, oldest first (ADR-013).
+ *
+ * Order matters — a product created offline and then edited must reach the
+ * server that way round — so this is strictly sequential and stops at the first
+ * transport failure rather than skipping ahead.
+ *
+ * Each write carries its opId as the Idempotency-Key, so a retry after a lost
+ * answer replays the original response instead of posting twice.
+ */
+async function drainMutations(): Promise<void> {
+  const rows = (await pendingMutations()).filter((m) => !m.rejectedAt);
+
+  for (const m of rows) {
+    try {
+      await api(m.path, {
+        method: m.method,
+        body: m.body,
+        queue: false, // already queued; a failure here must not re-queue it
+        idempotencyKey: m.opId,
+      });
+      await forgetMutation(m.opId);
+    } catch (err) {
+      if (err instanceof NetworkError) {
+        // The link went down again mid-drain. Everything after this one still
+        // has to go in order, so stop rather than skip.
+        await noteMutationAttempt(m.opId, 'Connection lost while syncing');
+        return;
+      }
+      if (err instanceof ApiError) {
+        // The server answered and refused. Retrying changes nothing; a person
+        // has to look at it. Keep going so one bad row cannot strand the rest.
+        await rejectMutation(m.opId, err.message);
+        continue;
+      }
+      await noteMutationAttempt(m.opId, err instanceof Error ? err.message : 'Sync failed');
+      return;
+    }
+  }
 }
 
 /** Wire every drain trigger once, at app start. Idempotent. */
@@ -129,6 +184,7 @@ export function startSync(): void {
 
   // A sale was just queued — try immediately rather than waiting for a timer.
   window.addEventListener('pt-queue-changed', () => void syncNow('queue-changed'));
+  window.addEventListener('pt-mutations-changed', () => void syncNow('mutations-changed'));
 
   // Back from a locked screen or another tab.
   document.addEventListener('visibilitychange', () => {

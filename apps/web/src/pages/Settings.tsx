@@ -45,6 +45,7 @@ function SettingsForm({ initial }: { initial: SettingsShape }) {
     mutationFn: () =>
       api('/settings', {
         method: 'PATCH',
+        queue: { label: 'Settings changed' },
         body: {
           vat_rate: Number(form.vat_rate),
           expiry_warn_days: Number(form.expiry_warn_days),

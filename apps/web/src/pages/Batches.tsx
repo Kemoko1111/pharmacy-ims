@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, isQueued } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ghs, shortDate } from '../lib/format';
 
@@ -49,10 +49,16 @@ export default function Batches() {
   );
 
   const quarantine = useMutation({
-    mutationFn: () => api<{ quarantined: number }>('/adjustments/quarantine-expired', { method: 'POST' }),
+    mutationFn: () =>
+      api<{ quarantined: number }>('/adjustments/quarantine-expired', {
+        method: 'POST',
+        queue: { label: 'Expired stock quarantined' },
+      }),
     onSuccess: (res) => {
       setMessage(
-        `${res.quarantined} batch(es) quarantined — disposal adjustments await Manager approval.`,
+        isQueued(res)
+          ? 'Quarantine saved on this till — it runs on the server when the connection is back.'
+          : `${res.quarantined} batch(es) quarantined — disposal adjustments await Manager approval.`,
       );
       queryClient.invalidateQueries({ queryKey: ['batches'] });
       queryClient.invalidateQueries({ queryKey: ['adjustments'] });

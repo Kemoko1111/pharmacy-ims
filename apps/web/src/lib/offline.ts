@@ -13,6 +13,7 @@ import Dexie, { type Table } from 'dexie';
 import type { SaleCreate } from '@pharmatrack/shared';
 import { api } from './api';
 import type { OfflineCredential } from './offlineCreds';
+import { setCacheBranch } from './offlineCache';
 
 export interface CachedProduct {
   id: string;
@@ -53,6 +54,28 @@ export interface QueuedSale {
  */
 export const STUCK_AFTER_ATTEMPTS = 3;
 
+/**
+ * A write made while the server was unreachable (ADR-013). Durable, not
+ * cached: this is work the shop performed and expects to survive a restart,
+ * so it lives beside the sale queue rather than in the disposable read cache.
+ */
+export interface QueuedMutation {
+  /** Doubles as the Idempotency-Key, so a retry cannot post twice. */
+  opId: string;
+  branchId: string;
+  method: string;
+  path: string;
+  body: unknown;
+  /** What the cashier did, in their words — this is what the queue screen shows. */
+  label: string;
+  queuedAt: string;
+  actor: string;
+  attempts: number;
+  /** Set when the server actively refused it; needs a human, not a retry. */
+  rejectedAt?: string | null;
+  lastError?: string | null;
+}
+
 export interface HeldSale {
   id: string;
   branchId: string;
@@ -69,6 +92,8 @@ class PtDb extends Dexie {
   meta!: Table<{ key: string; value: string }, string>;
   /** Password verifiers for cold sign-in during an outage — see offlineCreds.ts. */
   offlineAuth!: Table<OfflineCredential, string>;
+  /** Writes made offline, waiting to be drained in order (ADR-013). */
+  mutationQueue!: Table<QueuedMutation, string>;
 
   constructor() {
     super('pharmatrack');
@@ -108,6 +133,16 @@ class PtDb extends Dexie {
       offlineAuth: 'username',
       meta: 'key',
     });
+    // Offline writes beyond the POS (ADR-013). Ordered by queuedAt on drain,
+    // because a create followed by an edit must reach the server that way round.
+    this.version(5).stores({
+      catalog: '[branchId+id], branchId, name, genericName',
+      saleQueue: 'clientSaleId, queuedAt, branchId',
+      heldSales: 'id, heldAt, cashierId, branchId',
+      offlineAuth: 'username',
+      mutationQueue: 'opId, queuedAt, branchId, rejectedAt',
+      meta: 'key',
+    });
   }
 }
 
@@ -121,6 +156,9 @@ let activeBranchId: string | null = null;
 
 export function setActiveBranch(branchId: string | null): void {
   activeBranchId = branchId;
+  // The read cache is branch-scoped for the same reason this is (ADR-010/013):
+  // one shop must never be served another's figures.
+  setCacheBranch(branchId);
 }
 
 export function getActiveBranch(): string | null {
@@ -308,4 +346,63 @@ async function runDrain(): Promise<DrainResult> {
   window.dispatchEvent(new Event('pt-queue-changed'));
   await stampSync();
   return { synced, failed, deferred };
+}
+
+// ── Offline writes (ADR-013) ────────────────────────────────────────────────
+
+/**
+ * Record a write the server could not be reached for. The caller has already
+ * been told it is saved, so this must not throw for anything short of a broken
+ * database — losing the row silently would mean losing the shop's work.
+ */
+export async function queueMutation(m: Omit<QueuedMutation, 'attempts'>): Promise<void> {
+  await db.mutationQueue.put({ ...m, attempts: 0 });
+  window.dispatchEvent(new Event('pt-mutations-changed'));
+}
+
+/** Oldest first: a create and the edit that follows it must arrive in that order. */
+export async function pendingMutations(): Promise<QueuedMutation[]> {
+  const rows = activeBranchId
+    ? await db.mutationQueue.where('branchId').equals(activeBranchId).toArray()
+    : await db.mutationQueue.toArray();
+  return rows.sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
+}
+
+export interface MutationQueueSummary {
+  /** Waiting to go up. */
+  pending: number;
+  /** The server refused these; retrying will not help. */
+  rejected: number;
+}
+
+export async function mutationQueueSummary(): Promise<MutationQueueSummary> {
+  const rows = await pendingMutations();
+  return {
+    pending: rows.filter((r) => !r.rejectedAt).length,
+    rejected: rows.filter((r) => r.rejectedAt).length,
+  };
+}
+
+export async function forgetMutation(opId: string): Promise<void> {
+  await db.mutationQueue.delete(opId);
+  window.dispatchEvent(new Event('pt-mutations-changed'));
+}
+
+/**
+ * The server answered and said no. Kept rather than dropped: somebody has to
+ * see that the stock count they took during the outage was not accepted, and
+ * decide what to do about it.
+ */
+export async function rejectMutation(opId: string, message: string): Promise<void> {
+  await db.mutationQueue.update(opId, {
+    rejectedAt: new Date().toISOString(),
+    lastError: message,
+  });
+  window.dispatchEvent(new Event('pt-mutations-changed'));
+}
+
+export async function noteMutationAttempt(opId: string, message: string | null): Promise<void> {
+  const row = await db.mutationQueue.get(opId);
+  if (!row) return;
+  await db.mutationQueue.update(opId, { attempts: row.attempts + 1, lastError: message });
 }

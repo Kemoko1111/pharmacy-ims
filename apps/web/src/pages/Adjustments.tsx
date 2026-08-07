@@ -47,7 +47,11 @@ export default function Adjustments() {
 
   const decide = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'APPROVED' | 'REJECTED' }) =>
-      api(`/adjustments/${id}/approve`, { method: 'POST', body: { decision } }),
+      api(`/adjustments/${id}/approve`, {
+        method: 'POST',
+        body: { decision },
+        queue: { label: `Stock adjustment ${decision.toLowerCase()}` },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adjustments'] });
       queryClient.invalidateQueries({ queryKey: ['batches'] });

@@ -229,7 +229,12 @@ function VoidDialog({ sale, onClose, onDone }: { sale: SaleRow; onClose: () => v
   const [error, setError] = useState<string | null>(null);
 
   const voidSale = useMutation({
-    mutationFn: () => api(`/sales/${sale.id}/void`, { method: 'POST', body: { reason } }),
+    mutationFn: () =>
+      api(`/sales/${sale.id}/void`, {
+        method: 'POST',
+        body: { reason },
+        queue: { label: `Sale voided: ${sale.receiptNumber}` },
+      }),
     onSuccess: onDone,
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Void failed'),
   });

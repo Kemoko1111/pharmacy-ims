@@ -104,8 +104,16 @@ function CustomerForm({ customer, onClose, onDone }: { customer: Customer | null
   const save = useMutation({
     mutationFn: () =>
       customer
-        ? api(`/customers/${customer.id}`, { method: 'PATCH', body: form })
-        : api('/customers', { method: 'POST', body: form }),
+        ? api(`/customers/${customer.id}`, {
+            method: 'PATCH',
+            body: form,
+            queue: { label: `Customer edited: ${form.fullName}` },
+          })
+        : api('/customers', {
+            method: 'POST',
+            body: form,
+            queue: { label: `Customer added: ${form.fullName}` },
+          }),
     onSuccess: onDone,
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Save failed'),
   });
