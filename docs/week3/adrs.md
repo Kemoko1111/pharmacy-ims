@@ -577,21 +577,39 @@ it and why nothing under `/auth` is ever stored. And a screen must be opened onl
 before it works offline, which is a real limitation: the first outage after a new screen
 ships still shows nothing.
 
-**Phase 2, not yet built: offline writes.** The client has asked for every screen to be
-*editable* offline, administration included. That is a materially different problem —
-reads can be stale and merely mislead; writes conflict, and the merge decides what is
-true. Recorded now so the risks are chosen rather than discovered:
+**Phase 2 — offline writes (built 2026-08-07).** Every screen's writes are now
+queued when the server cannot be reached, administration included, as the client asked.
 
-- **Sales already work** because they are append-only and idempotent by `clientSaleId`.
-  Stock receipts and adjustments are the next safest for the same reason: they add
-  movements rather than overwrite state.
-- **Role and permission edits are the dangerous case.** Two managers editing offline,
-  merged later, can silently grant access nobody intended, and the audit trail records
-  the sync time rather than the decision time. The recommendation is that admin writes
-  require the server — or, if they must be queued, that they re-authenticate on drain and
-  the audit row carries both timestamps.
-- **Price and settings edits made blind can reprice sales already taken** between the
-  edit and the sync. Any queued settings write has to be applied by the server against
-  its current state, not by the till against its stale copy.
-- **The API has no idempotency keys outside `/sync/sales`.** Without them, a queued write
-  retried after an ambiguous failure can duplicate. That is a prerequisite, not a detail.
+*Replay protection came first.* A till that posts a queued write and loses the answer
+cannot tell "never arrived" from "arrived, reply lost"; retrying is all it can do, and a
+phantom delivery is a stock figure nobody can reconcile. Sales were already safe through
+`sales.client_sale_id`; everything else now goes through a generic `Idempotency-Key`
+mechanism (`idempotency_keys` + a global interceptor). The queue row's own id *is* the
+key, so a write and its retry are the same operation by construction.
+
+*Queued, not applied locally.* The screens keep showing the last synced state, and a
+badge shows what this till has done that the server has not seen. Applying edits locally
+and displaying them as fact would be a claim we cannot back — the server may refuse the
+write, and a manager who has seen a price "change" on screen will not go back to check.
+The cost is that the cashier's own edit is not visible in the list until it syncs, which
+is why the pending-changes panel exists: what was done, when, and what the server said.
+
+*Order is preserved and failures are separated.* The drain is strictly sequential, oldest
+first, because a create and the edit that follows it must arrive that way round. A
+transport failure stops the drain rather than skipping ahead. A **refusal** — the server
+answered and said no — is recorded against that write and the drain continues, so one bad
+row cannot strand a shift's work. Refusals never retry: they need a person, and they say
+which write and what the server's reason was.
+
+*The admin risks the client accepted, unchanged.* Queueing a role change does not make it
+safe: an access change made on a disconnected till only takes effect when it syncs, and
+two managers editing the same user offline will have the later drain win with no warning.
+The audit row records the sync time, not the decision time. Settings edits are applied by
+the server against its current state rather than by the till against its stale copy,
+which limits — but does not remove — the "repriced sales already taken" problem. These
+were raised before building and the client chose to proceed; they are recorded here so
+the choice is visible rather than implied.
+
+*Deliberately not queued:* authentication (a replayed credential answer is a security
+question), the POS sale path (it has its own queue with its own natural key), and
+notification "seen" flags (UI state, not work).

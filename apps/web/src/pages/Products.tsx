@@ -150,7 +150,11 @@ function UnitRow({
 }) {
   const queryClient = useQueryClient();
   const retire = useMutation({
-    mutationFn: () => api(`/products/${productId}/units/${unit.id}/retire`, { method: 'POST' }),
+    mutationFn: () =>
+      api(`/products/${productId}/units/${unit.id}/retire`, {
+        method: 'POST',
+        queue: { label: `Unit retired: ${unit.unitName}` },
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products'] }),
   });
   const retired = unit.isActive === false || retire.isSuccess;
@@ -325,10 +329,15 @@ function ProductForm({ product, onClose }: { product: ProductRow | null; onClose
         if (isManager && form.sellingPriceBase !== product.sellingPriceBase) {
           body.sellingPriceBase = String(form.sellingPriceBase);
         }
-        return api(`/products/${product.id}`, { method: 'PATCH', body });
+        return api(`/products/${product.id}`, {
+          method: 'PATCH',
+          body,
+          queue: { label: `Product edited: ${product.name}` },
+        });
       }
       return api('/products', {
         method: 'POST',
+        queue: { label: `Product added: ${form.name}` },
         body: {
           name: form.name,
           genericName: form.genericName || undefined,

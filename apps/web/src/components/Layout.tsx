@@ -9,6 +9,7 @@ import { useClickAway } from '../lib/useClickAway';
 import { shortDate, timeOf } from '../lib/format';
 import { NotificationsBell } from './NotificationsBell';
 import { BranchSwitcher } from './BranchSwitcher';
+import { PendingChanges } from './PendingChanges';
 
 const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/pos', label: 'POS', roles: ['CASHIER', 'PHARMACIST', 'MANAGER'] },
@@ -77,7 +78,8 @@ function useTheme() {
 
 export function Layout() {
   const { user, logout, offlineSession } = useAuth();
-  const { online, unsynced, deferred, stuck, lastSyncedAt, staleAt, syncing, retry } = useOnline();
+  const { online, unsynced, deferred, stuck, lastSyncedAt, staleAt, unsentWrites, rejectedWrites, syncing, retry } =
+    useOnline();
   const { dark, toggle } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const noOfflineCopy = useNoOfflineCopyNotice();
@@ -148,6 +150,8 @@ export function Layout() {
               ⇄ {deferred} other branch
             </span>
           )}
+
+          <PendingChanges pending={unsentWrites} rejected={rejectedWrites} />
 
           {stuck > 0 && (
             <span

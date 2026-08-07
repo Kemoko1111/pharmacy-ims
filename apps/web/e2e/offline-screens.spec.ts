@@ -41,7 +41,7 @@ const PRODUCT = {
   barcodes: [],
 };
 
-const CUSTOMER = { id: 'c-1', name: 'Adwoa Mensah', phone: '0244000000', balance: '0.00' };
+const CUSTOMER = { id: 'c-1', fullName: 'Adwoa Mensah', phone: '0244000000', balance: '0.00' };
 
 /** A MANAGER lands on the dashboard after signing in, so it has to answer. */
 const DASHBOARD = {
@@ -54,7 +54,11 @@ const DASHBOARD = {
 const json = (route: Route, body: unknown, status = 200) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
-type World = { serverUp: boolean };
+type World = {
+  serverUp: boolean;
+  customerPosts: { body: unknown; key: string | undefined }[];
+  refuseCustomers?: boolean;
+};
 
 async function mockApi(page: Page, world: World) {
   await page.route(`${HEALTH}**`, (route) =>
@@ -72,7 +76,23 @@ async function mockApi(page: Page, world: World) {
     if (path === '/catalog/snapshot') return json(route, { version: 'v1', products: [PRODUCT] });
     if (path === '/reports/dashboard') return json(route, DASHBOARD);
     if (path === '/products') return json(route, { data: [PRODUCT], meta: { total: 1 } });
-    if (path === '/customers') return json(route, { data: [CUSTOMER], meta: { total: 1 } });
+    if (path === '/customers') {
+      if (route.request().method() === 'POST') {
+        if (world.refuseCustomers) {
+          return json(
+            route,
+            { error: { code: 'DUPLICATE_CUSTOMER', message: 'A customer with that phone already exists' } },
+            422,
+          );
+        }
+        world.customerPosts.push({
+          body: route.request().postDataJSON(),
+          key: route.request().headers()['idempotency-key'],
+        });
+        return json(route, { id: 'c-2' }, 201);
+      }
+      return json(route, { data: [CUSTOMER], meta: { total: 1 } });
+    }
     if (path === '/notifications') return json(route, { data: [], meta: { total: 0 } });
     return json(route, { data: [], meta: { total: 0 } });
   });
@@ -87,7 +107,7 @@ async function login(page: Page) {
 }
 
 test('the products list still works after the server goes away', async ({ page }) => {
-  const world: World = { serverUp: true };
+  const world: World = { serverUp: true, customerPosts: [] };
   await mockApi(page, world);
   await login(page);
 
@@ -105,7 +125,7 @@ test('the products list still works after the server goes away', async ({ page }
 });
 
 test('a screen never opened online says so instead of showing an empty table', async ({ page }) => {
-  const world: World = { serverUp: true };
+  const world: World = { serverUp: true, customerPosts: [] };
   await mockApi(page, world);
   await login(page);
 
@@ -117,7 +137,7 @@ test('a screen never opened online says so instead of showing an empty table', a
 });
 
 test('cached screens survive a reload — the till can be restarted mid-outage', async ({ page }) => {
-  const world: World = { serverUp: true };
+  const world: World = { serverUp: true, customerPosts: [] };
   await mockApi(page, world);
   await login(page);
 
@@ -133,7 +153,7 @@ test('cached screens survive a reload — the till can be restarted mid-outage',
 });
 
 test('signing out clears cached screens — a shared till leaks nothing', async ({ page }) => {
-  const world: World = { serverUp: true };
+  const world: World = { serverUp: true, customerPosts: [] };
   await mockApi(page, world);
   await login(page);
 
@@ -151,7 +171,7 @@ test('signing out clears cached screens — a shared till leaks nothing', async 
 });
 
 test('a till reloaded during an outage keeps its session', async ({ page }) => {
-  const world: World = { serverUp: true };
+  const world: World = { serverUp: true, customerPosts: [] };
   await mockApi(page, world);
   await login(page);
 
@@ -164,4 +184,59 @@ test('a till reloaded during an outage keeps its session', async ({ page }) => {
 
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page.getByText(USER.fullName).first()).toBeVisible();
+});
+
+test('a write made offline is queued, then sent once when the link returns', async ({ page }) => {
+  const world: World = { serverUp: true, customerPosts: [] };
+  await mockApi(page, world);
+  await login(page);
+
+  // Cache the screen while the server is up, then lose it.
+  await page.goto('/customers');
+  await expect(page.getByText(CUSTOMER.fullName)).toBeVisible();
+  world.serverUp = false;
+
+  await page.getByRole('button', { name: /new customer/i }).click();
+  // The form's labels are not tied to their inputs, so go by position —
+  // scoped to the dialog, or this picks up the list's search box instead.
+  await page.locator('form').getByRole('textbox').first().fill('Kojo Owusu');
+  await page.getByRole('button', { name: /^save$/i }).click();
+
+  // Nothing was lost and nothing was claimed: the till says it is holding it.
+  await expect(page.getByText(/change\(s\) waiting/)).toBeVisible();
+  expect(world.customerPosts).toHaveLength(0);
+
+  await page.getByText(/change\(s\) waiting/).click();
+  await expect(page.getByText('Customer added: Kojo Owusu')).toBeVisible();
+
+  // Link returns: the queue drains, carrying its idempotency key.
+  world.serverUp = true;
+  await expect(page.getByText(/change\(s\) waiting/)).toHaveCount(0, { timeout: 30_000 });
+
+  expect(world.customerPosts).toHaveLength(1);
+  expect(world.customerPosts[0].key).toBeTruthy();
+});
+
+test('a queued write the server refuses is surfaced, not retried forever', async ({ page }) => {
+  const world: World = { serverUp: true, customerPosts: [], refuseCustomers: true };
+  await mockApi(page, world);
+  await login(page);
+
+  await page.goto('/customers');
+  await expect(page.getByText(CUSTOMER.fullName)).toBeVisible();
+  world.serverUp = false;
+
+  await page.getByRole('button', { name: /new customer/i }).click();
+  await page.locator('form').getByRole('textbox').first().fill('Yaa Asantewaa');
+  await page.getByRole('button', { name: /^save$/i }).click();
+  await expect(page.getByText(/change\(s\) waiting/)).toBeVisible();
+
+  // The link returns and the server rejects it outright. Retrying cannot fix a
+  // refusal, so it has to stop and say so — with the reason the server gave.
+  world.serverUp = true;
+  await expect(page.getByText(/action needed/)).toBeVisible({ timeout: 30_000 });
+
+  await page.getByText(/action needed/).click();
+  await expect(page.getByText(/A customer with that phone already exists/)).toBeVisible();
+  await expect(page.getByText(/This was not applied/)).toBeVisible();
 });

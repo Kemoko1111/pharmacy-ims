@@ -84,7 +84,11 @@ export default function Transfers() {
 
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: 'dispatch' | 'cancel' }) =>
-      api(`/transfers/${id}/${action}`, { method: 'POST', body: {} }),
+      api(`/transfers/${id}/${action}`, {
+        method: 'POST',
+        body: {},
+        queue: { label: `Stock transfer ${action}` },
+      }),
     onSuccess: invalidate,
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Action failed'),
   });
@@ -284,6 +288,7 @@ function CreateTransferDialog({ onClose, onDone }: { onClose: () => void; onDone
     mutationFn: () =>
       api('/transfers', {
         method: 'POST',
+        queue: { label: 'Stock transfer raised' },
         body: { toBranchId, items: lines.filter((l) => l.sourceBatchId && l.qtyBase > 0) },
       }),
     onSuccess: onDone,
@@ -419,6 +424,7 @@ function ReceiveTransferDialog({
     mutationFn: () =>
       api(`/transfers/${transfer.id}/receive`, {
         method: 'POST',
+        queue: { label: `Transfer received: ${transfer.transferNumber ?? transfer.id}` },
         body: {
           items: transfer.items.map((i) => ({ itemId: i.id, qtyReceived: received[i.id] ?? 0 })),
           notes: notes || undefined,

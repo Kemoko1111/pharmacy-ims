@@ -28,7 +28,15 @@ export default function Users() {
   });
 
   const toggleActive = useMutation({
-    mutationFn: (u: UserRow) => api(`/users/${u.id}`, { method: 'PATCH', body: { isActive: !u.isActive } }),
+    mutationFn: (u: UserRow) =>
+      api(`/users/${u.id}`, {
+        method: 'PATCH',
+        body: { isActive: !u.isActive },
+        // Queued like any other write, per the client's decision that the whole
+        // system works offline. ADR-013 records the risk: an access change made
+        // on a disconnected till only takes effect when it syncs.
+        queue: { label: `User ${u.isActive ? 'disabled' : 'enabled'}: ${u.username}` },
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
   });
 
