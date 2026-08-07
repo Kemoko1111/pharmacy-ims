@@ -6,7 +6,7 @@ import { noOfflineCopyAgeMs } from '../lib/offlineCache';
 import { refreshSnapshot } from '../lib/offline';
 import { canUseServer } from '../lib/connectivity';
 import { useClickAway } from '../lib/useClickAway';
-import { shortDate, timeOf } from '../lib/format';
+import { syncedLabel } from '../lib/format';
 import { NotificationsBell } from './NotificationsBell';
 import { BranchSwitcher } from './BranchSwitcher';
 import { PendingChanges } from './PendingChanges';
@@ -27,17 +27,6 @@ const NAV: { to: string; label: string; roles?: string[] }[] = [
   { to: '/users', label: 'Users', roles: [] }, // ADMIN only (implicit pass)
   { to: '/settings', label: 'Settings', roles: [] },
 ];
-
-/**
- * "Last synced" in words a cashier can act on. An OFFLINE badge alone does not
- * say whether the till is ten minutes or two days behind the server.
- */
-function syncedLabel(iso: string | null): string {
-  if (!iso) return 'not synced yet';
-  const then = new Date(iso);
-  const sameDay = then.toDateString() === new Date().toDateString();
-  return sameDay ? `synced ${timeOf(iso)}` : `synced ${shortDate(iso)} ${timeOf(iso)}`;
-}
 
 /**
  * Shows for a few seconds after a screen asks for data it has no saved copy of

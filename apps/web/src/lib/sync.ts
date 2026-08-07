@@ -16,6 +16,7 @@
 import {
   drainQueue,
   forgetMutation,
+  mutationQueueSummary,
   noteMutationAttempt,
   pendingMutations,
   queueSummary,
@@ -124,6 +125,81 @@ export async function syncNow(reason: string): Promise<void> {
   void reason; // kept for future telemetry; the call sites document themselves
 }
 
+
+/**
+ * What a manual sync did, in terms the person who pressed the button can read.
+ * Kept separate from `SyncState` because that describes the background engine,
+ * which is allowed to be quietly doing nothing; this describes one press.
+ */
+export type ManualSyncOutcome =
+  | { status: 'synced'; sent: number; refused: number; waiting: number }
+  | { status: 'offline' }
+  | { status: 'signin-required' }
+  | { status: 'busy' }
+  | { status: 'error'; message: string };
+
+async function outstanding(): Promise<{ waiting: number; refused: number }> {
+  const sales = await queueSummary();
+  const writes = await mutationQueueSummary();
+  return {
+    waiting: sales.pending + writes.pending,
+    refused: sales.stuck + writes.rejected,
+  };
+}
+
+let manualRunning = false;
+
+/**
+ * The "Sync now" button (as opposed to `syncNow`, which is the engine).
+ *
+ * `syncNow` exists to push queued work and returns immediately when there is
+ * none — correct for a background trigger firing every few seconds, and wrong
+ * for a person who pressed a button: they get no request, no answer, and no way
+ * to tell a working link from a dead one. A manual sync therefore always does
+ * three things, in this order:
+ *
+ *  1. re-checks the link, because the heartbeat's verdict can be a minute old;
+ *  2. pushes anything queued, since that is the only data this till alone holds;
+ *  3. pulls, so the screens show the server's version rather than yesterday's.
+ *
+ * Step 3 refreshes the POS catalogue here; the *screen* data is pulled by the
+ * caller re-running its queries, because what is worth refetching is what the
+ * user is looking at — pulling all sixteen screens over a phone link would cost
+ * the shop money to answer a question nobody asked.
+ */
+export async function syncEverything(): Promise<ManualSyncOutcome> {
+  if (manualRunning) return { status: 'busy' };
+  manualRunning = true;
+  try {
+    if ((await probe()) === 'offline') return { status: 'offline' };
+    // Reachable, but this session was opened against the till's cached password
+    // and holds no token (offlineCreds.ts). Posting would 401 and end the shift.
+    if (!canUseServer()) return { status: 'signin-required' };
+
+    const before = await outstanding();
+    await syncNow('manual');
+    // The catalogue has its own store and its own freshness rules, so the
+    // generic response cache never refreshes it.
+    await refreshSnapshot().catch(() => {});
+    const after = await outstanding();
+
+    // The link can drop between the probe and the drain. Saying "synced" then
+    // would be the one lie this whole feature exists to prevent.
+    const engineError = getSyncState().lastError;
+    if (after.waiting > 0 && engineError) return { status: 'error', message: engineError };
+
+    return {
+      status: 'synced',
+      sent: Math.max(0, before.waiting - after.waiting),
+      refused: Math.max(0, after.refused - before.refused),
+      waiting: after.waiting,
+    };
+  } catch (err) {
+    return { status: 'error', message: err instanceof Error ? err.message : 'Sync failed' };
+  } finally {
+    manualRunning = false;
+  }
+}
 
 /**
  * Send queued writes up, oldest first (ADR-013).
