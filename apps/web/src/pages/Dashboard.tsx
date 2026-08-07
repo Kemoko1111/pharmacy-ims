@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { ghs } from '../lib/format';
+import { SyncButton } from '../components/SyncButton';
 
 interface DashboardData {
   today: {
@@ -21,29 +22,45 @@ interface DashboardData {
 
 /** Owner's morning view (★ Screen 4) — works on a phone over 3G. */
 export default function Dashboard() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api<DashboardData>('/reports/dashboard'),
     refetchInterval: 60_000,
   });
 
-  if (isLoading || !data) {
-    return <div className="grid h-full place-items-center text-ink-muted">Loading dashboard…</div>;
-  }
+  return (
+    <div className="mx-auto max-w-3xl p-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <h1 className="text-xl font-bold">Today</h1>
+        <div className="flex items-start gap-3">
+          <span className="pt-1.5 text-ink-muted">
+            {new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+          </span>
+          {/* Kept outside the loading branch on purpose: the state where a
+              manager most wants to sync is the one where this screen has no
+              data to show. */}
+          <SyncButton />
+        </div>
+      </div>
 
+      {isLoading && <p className="py-8 text-center text-ink-muted">Loading dashboard…</p>}
+      {!isLoading && !data && (
+        <p className="rounded-xl border border-edge bg-surface px-4 py-8 text-center text-ink-muted">
+          {error instanceof Error ? error.message : 'Could not load the dashboard.'}
+        </p>
+      )}
+      {data && <DashboardBody data={data} />}
+    </div>
+  );
+}
+
+function DashboardBody({ data }: { data: DashboardData }) {
   const methods = Object.fromEntries(data.today.byMethod.map((m) => [m.method, m.amount]));
   const { actionNeeded: act } = data;
   const anyAction = act.lowStockCount + act.expiringCount + act.expiredCount > 0;
 
   return (
-    <div className="mx-auto max-w-3xl p-4">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h1 className="text-xl font-bold">Today</h1>
-        <span className="text-ink-muted">
-          {new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
-        </span>
-      </div>
-
+    <>
       {/* Cards — 44px+ targets, phone-first grid */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="SALES" value={ghs(data.today.gross)} />
@@ -96,7 +113,7 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 

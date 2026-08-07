@@ -613,3 +613,22 @@ the choice is visible rather than implied.
 *Deliberately not queued:* authentication (a replayed credential answer is a security
 question), the POS sale path (it has its own queue with its own natural key), and
 notification "seen" flags (UI state, not work).
+
+**Phase 3 — a sync the user can see (built 2026-08-07).** The engine drains on start,
+on recovery, on refocus and on a backoff timer, so syncing was already automatic. It was
+not *observable*: the only related thing on screen was an ONLINE badge, which reports the
+link, not the data. A manager asking "has this reached the server?" had no way to ask it.
+
+The Dashboard now carries a **Sync now** button, and a manual sync is deliberately not
+the same operation as the background one. The background drain returns immediately when
+nothing is queued — correct for a trigger firing every few seconds, and useless as an
+answer to a person, who gets no request and no verdict. A press therefore always
+re-probes the link (the heartbeat's verdict can be a minute old), pushes the queue, pulls
+the POS catalogue, and refetches the queries on the open screen — the pull half, without
+which "sync" would only ever mean "upload".
+
+It reports the outcome in every case, including "no answer from the server — nothing was
+sent". Silence after a button press reads as success, and a manager who believes a stock
+count reached the server when it did not is exactly the failure this ADR exists to
+prevent. Only the open screen is refetched, not all sixteen: pulling every screen over a
+phone link would spend the shop's data answering a question nobody asked.

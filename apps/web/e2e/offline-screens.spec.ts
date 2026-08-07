@@ -58,6 +58,8 @@ type World = {
   serverUp: boolean;
   customerPosts: { body: unknown; key: string | undefined }[];
   refuseCustomers?: boolean;
+  /** Overridden mid-test to stand for takings rung up at another till. */
+  dashboard?: typeof DASHBOARD;
 };
 
 async function mockApi(page: Page, world: World) {
@@ -74,7 +76,7 @@ async function mockApi(page: Page, world: World) {
     }
     if (path === '/auth/me') return json(route, USER);
     if (path === '/catalog/snapshot') return json(route, { version: 'v1', products: [PRODUCT] });
-    if (path === '/reports/dashboard') return json(route, DASHBOARD);
+    if (path === '/reports/dashboard') return json(route, world.dashboard ?? DASHBOARD);
     if (path === '/products') return json(route, { data: [PRODUCT], meta: { total: 1 } });
     if (path === '/customers') {
       if (route.request().method() === 'POST') {
@@ -239,4 +241,43 @@ test('a queued write the server refuses is surfaced, not retried forever', async
   await page.getByText(/action needed/).click();
   await expect(page.getByText(/A customer with that phone already exists/)).toBeVisible();
   await expect(page.getByText(/This was not applied/)).toBeVisible();
+});
+
+test('Sync now pulls the server\'s figures, not just pushes queued work', async ({ page }) => {
+  const world: World = { serverUp: true, customerPosts: [] };
+  await mockApi(page, world);
+  await login(page);
+
+  await page.goto('/dashboard');
+  // exact: the 14-day sparkline's <title> tooltips carry the same amounts.
+  await expect(page.getByText('GHS 0.00', { exact: true })).toBeVisible();
+
+  // Sales rung up at another till while this screen sat open.
+  world.dashboard = { ...DASHBOARD, today: { gross: '250.00', receipts: 3, byMethod: [] } };
+
+  // Nothing here refetches on its own inside the test window (staleTime 15 s,
+  // refetchInterval 60 s, no refetch-on-focus), so the new figure appearing is
+  // the button's doing and nothing else's.
+  await expect(page.getByText('GHS 250.00', { exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: /sync now/i }).click();
+
+  await expect(page.getByText('GHS 250.00', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Up to date.');
+});
+
+test('Sync now says nothing was sent when the server does not answer', async ({ page }) => {
+  const world: World = { serverUp: true, customerPosts: [] };
+  await mockApi(page, world);
+  await login(page);
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('button', { name: /sync now/i })).toBeVisible();
+
+  // A button press that reports nothing reads as success. Offline, that would
+  // tell a manager their stock counts are on the server when they are not.
+  world.serverUp = false;
+  await page.getByRole('button', { name: /sync now/i }).click();
+
+  await expect(page.getByRole('status')).toContainText('No answer from the server');
 });
