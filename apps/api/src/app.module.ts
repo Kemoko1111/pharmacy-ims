@@ -1,5 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -24,6 +24,7 @@ import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 import { RolesGuard } from './common/roles.guard';
+import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { BranchContextMiddleware } from './common/branch-context.middleware';
 
 @Module({
@@ -67,6 +68,9 @@ import { BranchContextMiddleware } from './common/branch-context.middleware';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Runs after the guards, so the key is always bound to an authenticated
+    // user (ADR-013). No-ops unless the request carries an Idempotency-Key.
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
   ],
 })
 export class AppModule implements NestModule {

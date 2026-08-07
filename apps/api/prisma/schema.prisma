@@ -182,6 +182,7 @@ model User {
   branches       UserBranch[]
   sales          Sale[]
   stockMovements StockMovement[]
+  idempotencyKeys IdempotencyKey[]
 
   @@map("users")
 }
@@ -678,4 +679,26 @@ model Notification {
   branch Branch? @relation(fields: [branchId], references: [id])
 
   @@map("notifications")
+}
+
+/// Generic replay protection for writes made offline and drained later
+/// (ADR-013). Sales carry their own natural key (`sales.client_sale_id`); every
+/// other endpoint had none, so a queued write retried after an ambiguous
+/// failure — request sent, answer lost — would post twice.
+model IdempotencyKey {
+  key            String    @id
+  userId         String    @map("user_id") @db.Uuid
+  method         String
+  path           String
+  /// Guards against a client reusing one key for two different requests.
+  requestHash    String    @map("request_hash")
+  responseStatus Int?      @map("response_status")
+  responseBody   Json?     @map("response_body")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([createdAt], map: "ix_idempotency_created")
+  @@map("idempotency_keys")
 }
